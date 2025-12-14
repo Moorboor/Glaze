@@ -29,8 +29,19 @@ def make_click_line_image(width=900, height=120, x_min=-1.0, x_max=1.0, marker_x
     fig.tight_layout(pad=0)
     fig.canvas.draw()
 
-    img = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
-    img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    try:
+        buf = fig.canvas.tostring_rgb()
+        img = np.frombuffer(buf, dtype=np.uint8)
+        img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    except AttributeError:
+        # Fallback for backends that only provide ARGB buffer
+        buf = fig.canvas.tostring_argb()
+        arr = np.frombuffer(buf, dtype=np.uint8)
+        arr = arr.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+        # Convert ARGB -> RGBA, then drop alpha to get RGB
+        arr = arr[:, :, [1, 2, 3, 0]]
+        img = arr[:, :, :3].copy()
+
     plt.close(fig)
     return Image.fromarray(img)
 
@@ -116,13 +127,24 @@ def plot_progress(st):
 
     fig, ax = plt.subplots(figsize=(9, 3), dpi=120)
     ax.plot(st["x_true"], label="true")
-    ax.plot(st["obs"], label="obs", alpha=0.7)
-    if clicks_t:
-        ax.scatter(clicks_t, clicks_x, label="your clicks", s=30)
+    fig.tight_layout()
+    fig.canvas.draw()
 
-    ax.axvline(st["switch_trial"], linestyle="--", alpha=0.6, label="hazard switch")
-    ax.scatter([t], [st["obs"][t]], s=120, marker="x", label="current obs")
+    try:
+        buf = fig.canvas.tostring_rgb()
+        img = np.frombuffer(buf, dtype=np.uint8)
+        img = img.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    except AttributeError:
+        # Fallback for backends that only provide ARGB buffer
+        buf = fig.canvas.tostring_argb()
+        arr = np.frombuffer(buf, dtype=np.uint8)
+        arr = arr.reshape(fig.canvas.get_width_height()[::-1] + (4,))
+        # Convert ARGB -> RGBA, then drop alpha to get RGB
+        arr = arr[:, :, [1, 2, 3, 0]]
+        img = arr[:, :, :3].copy()
 
+    plt.close(fig)
+    return Image.fromarray(img)
     ax.set_ylim(-1.05, 1.05)
     ax.set_xlabel("trial")
     ax.set_ylabel("value")
