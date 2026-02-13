@@ -11,10 +11,9 @@ All contributors should work in their own repository copy and keep their impleme
 
 Use this workflow:
 
-1. Sync your repository copy with the latest `main`.
-2. Write and update code only in your own folder: `src/<your-name>/`.
-3. Commit and push your work in your own repository.
-4. When your task is finished, merge your changes into the `main` branch.
+1. Write and update code only in your own folder: `src/<your-name>/`.
+2. Commit and push your work in your own branch.
+3. When your task is finished, merge your changes into the `main` branch.
 
 ## Project Structure
 
