@@ -28,6 +28,15 @@ nbstripout --install
 
 That installs the git filter in your local git config so notebook outputs are stripped automatically before commit.
 
+If you already cloned this repository before `nbstripout` was added, run the same two commands in your existing local clone after pulling the latest changes.
+
+If notebook files were already tracked with outputs, you can normalize once with:
+
+```bash
+git add --renormalize .
+git commit -m "Normalize files after enabling nbstripout"
+```
+
 To disable it on a machine:
 
 ```bash
