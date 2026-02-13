@@ -501,7 +501,7 @@ def write_dataset_csv(
             f"Unknown participant_id '{participant_id}'. Available: {sorted(ANALYSIS_DATASETS)}"
         )
 
-    repo_root = Path(__file__).resolve().parent.parent
+    repo_root = Path(__file__).resolve().parent.parent.parent
     data_dir = repo_root / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
     output_path = data_dir / output_filename
