@@ -40,7 +40,8 @@ def simulate_trial(
     dt=0.01,
     noise_std=0.0,
     decision_time_ms=0.0,
-    noise_gain=1.0
+    noise_gain=1.0,
+    stop_on_sat=False
 ):
     """
     Simulates a single trial using the continuous Glaze model.
@@ -60,6 +61,7 @@ def simulate_trial(
         noise_std (float): Standard deviation of the Wiener process noise.
         decision_time_ms (float): Minimum time (delay) before a decision can be registered.
         noise_gain (float): Multiplier for the noise magnitude to force threshold crossings.
+        stop_on_sat (bool): If True, use the continuous model asymptote as the belief threshold.
 
     Returns:
         dict: A dictionary containing:
@@ -73,6 +75,14 @@ def simulate_trial(
 
     # 1. Calculate Prior (The Starting Line) using the discrete hazard update
     psi = psi_function(prev_belief_L, H)
+
+    if stop_on_sat and H > 1e-9:
+        # Calculate saturation value (asymptote) based on continuous model steady state
+        # dL/dt = -2*H*sinh(L) + LLR = 0  =>  sinh(L) = LLR / (2*H)
+        # maybe relevant to gain factor
+        asymptote = np.arcsinh(current_LLR / (2 * H))
+        # Set threshold to slightly less than asymptote magnitude to ensure it is reached
+        belief_threshold = abs(asymptote) * 0.999
 
     # Initialize trajectory storage
     trajectory = [psi]
@@ -175,15 +185,35 @@ def plot_model_comparison(df, params=None):
     
     metrics_str = f"Accuracy: {accuracy:.2%} | Precision: {precision:.2f} | Recall: {recall:.2f} | F1: {f1:.2f}"
     
-    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    # Calculate Regression Metrics (RT and Belief)
+    valid_rt = plot_df.dropna(subset=['predicted_rt_ms', 'reaction_time_ms'])
+    if not valid_rt.empty:
+        rt_diff = valid_rt['predicted_rt_ms'] - valid_rt['reaction_time_ms']
+        rt_rmse = np.sqrt(np.mean(rt_diff ** 2))
+        rt_mae = np.mean(np.abs(rt_diff))
+    else:
+        rt_rmse = rt_mae = np.nan
+
+    valid_belief = plot_df.dropna(subset=['predicted_belief', 'belief_L'])
+    if not valid_belief.empty:
+        belief_diff = valid_belief['predicted_belief'] - valid_belief['belief_L']
+        belief_rmse = np.sqrt(np.mean(belief_diff ** 2))
+        belief_mae = np.mean(np.abs(belief_diff))
+    else:
+        belief_rmse = belief_mae = np.nan
+
+    reg_metrics_str = f"RT RMSE: {rt_rmse:.1f}ms (MAE: {rt_mae:.1f}ms) | Belief RMSE: {belief_rmse:.2f} (MAE: {belief_mae:.2f})"
+
+    fig, axes = plt.subplots(3, 2, figsize=(16, 18))
     ax1, ax2 = axes[0]
     ax3, ax4 = axes[1]
+    ax5, ax6 = axes[2]
     
     if params:
         param_str = " | ".join([f"{k}: {v}" for k, v in params.items()])
-        fig.suptitle(f"Model Comparison Parameters\n{param_str}\n{metrics_str}", fontsize=12)
+        fig.suptitle(f"Model Comparison Parameters\n{param_str}\n{metrics_str}\n{reg_metrics_str}", fontsize=12)
     else:
-        fig.suptitle(f"Model Performance Metrics\n{metrics_str}", fontsize=12)
+        fig.suptitle(f"Model Performance Metrics\n{metrics_str}\n{reg_metrics_str}", fontsize=12)
     
     # 1. Confusion Matrix
     conf_matrix = np.zeros((2, 3), dtype=int)
@@ -268,6 +298,33 @@ def plot_model_comparison(df, params=None):
         ax4.set_title('Psychometric Curve (Choice Probability)')
         ax4.legend()
         ax4.grid(True, alpha=0.3)
+
+    # 5. RT Residuals vs Actual RT
+    residuals = plot_df['predicted_rt_ms'] - plot_df['reaction_time_ms']
+    
+    for i, block in enumerate(unique_blocks):
+        subset = plot_df[plot_df['block_id'] == block]
+        subset_residuals = residuals[subset.index]
+        color = cmap(i % 10)
+        ax5.scatter(subset['reaction_time_ms'], subset_residuals, 
+                    color=color, label=f'Block {block}', alpha=0.6, edgecolors='w', s=60)
+            
+    ax5.axhline(0, color='k', linestyle='--', alpha=0.8, label='Zero Error')
+    ax5.set_xlabel('Actual Reaction Time (ms)')
+    ax5.set_ylabel('Predicted - Actual RT (ms)')
+    ax5.set_title('Reaction Time Residuals (Over/Under Prediction)')
+    ax5.legend()
+    ax5.grid(True, alpha=0.3)
+
+    # 6. Histogram of Residuals
+    ax6.hist(residuals, bins=30, color='purple', edgecolor='black', alpha=0.6)
+    ax6.axvline(0, color='k', linestyle='--', linewidth=2)
+    ax6.set_xlabel('RT Residual (ms)')
+    ax6.set_ylabel('Frequency')
+    ax6.set_title('Distribution of RT Residuals')
+    ax6.text(0.95, 0.95, 'Over-prediction (>0)', transform=ax6.transAxes, ha='right', va='top', color='purple')
+    ax6.text(0.05, 0.95, 'Under-prediction (<0)', transform=ax6.transAxes, ha='left', va='top', color='purple')
+    ax6.grid(True, alpha=0.3)
     
     plt.tight_layout(rect=[0, 0.03, 1, 0.95]) if params else plt.tight_layout()
     plt.show()
@@ -289,10 +346,10 @@ def run_simulation_and_plot(csv_path, block_id=None):
     # Parameters for simulation (using typical values or snapshots from CSV)
     # In a real scenario, these might be fitted or taken from 'subjective_h_snapshot'
     # threshold is now calculated per block
-    noise_std = 0.9  # Standard deviation for the Wiener process
-    max_duration = 6000  # 5 seconds max
-    decision_time_ms = 550.0 # Minimum decision time delay
-    noise_gain = 15.5 # Tweak this to force decisions (e.g., set to 2.0 or 3.0)
+    noise_std = 0.7  # Standard deviation for the Wiener process
+    max_duration = 1500  # 5 seconds max
+    decision_time_ms = 50.0 # Minimum decision time delay
+    noise_gain = 3.5 # Tweak this to force decisions (e.g., set to 2.0 or 3.0)
 
     # Calculate cumulative RTs for the actual data first to anchor the start times
     # If filtering by block, we can just cumsum the filtered frame if it's a single block
@@ -334,7 +391,8 @@ def run_simulation_and_plot(csv_path, block_id=None):
                 max_duration_ms=max_duration,
                 noise_std=noise_std,
                 decision_time_ms=decision_time_ms,
-                noise_gain=noise_gain
+                noise_gain=noise_gain,
+                stop_on_sat=True
             )
             
             # Plot the continuous trajectory
