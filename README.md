@@ -5,6 +5,41 @@ Glaze, C. M., Kable, J. W., & Gold, J. I. (2015).
 *A normative account of evidence accumulation in unpredictable environments.*
 Nature Neuroscience, 18(12), 1725–1732.
 
+## Collaboration Workflow
+
+All contributors should work in their own repository copy and keep their implementation inside their personal folder in `src/` (for example: `src/evan/`, `src/martin/`).
+
+Use this workflow:
+
+1. Sync your repository copy with the latest `main`.
+2. Write and update code only in your own folder: `src/<your-name>/`.
+3. Commit and push your work in your own repository.
+4. When your task is finished, merge your changes into the `main` branch.
+
+## Project Structure
+
+```text
+Glaze/
+├── README.md                         # project setup and workflow notes
+├── requirements.txt                  # Python dependencies
+├── data/
+│   └── participants.csv              # participant metadata
+├── triangle-data/                    # input datasets used by implementations
+│   ├── evan-short.csv
+│   ├── evan-standard.csv
+│   └── maik-standard.csv
+└── src/
+    ├── <name>/                       # each contributor keeps their code here
+    │   └── ...                       # personal implementation files
+    ├── evan/                         # current contributor implementation example
+    │   ├── app.py
+    │   └── glaze.py
+    └── old/                          # legacy/reference code and notebook
+        ├── Group_9_Glaze_2015.ipynb
+        ├── glaze_group_pipeline_data.py
+        └── group_9_glaze_2015.py
+```
+
 ## Environment Setup
 
 Create and activate a conda environment, then install dependencies:
