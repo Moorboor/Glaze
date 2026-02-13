@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -423,7 +424,7 @@ def run_simulation_and_plot(csv_path, block_id=None):
 
 if __name__ == '__main__':
     # Load the data from the specified CSV path
-    #csv_path = './triangle-data/evan-standard.csv'
-    csv_path = 'data/participants.csv'
+    # csv_path = './triangle-data/evan-standard.csv'
+    csv_path = Path(__file__).resolve().parent.parent / "data" / "participants.csv"
     block_id = int(sys.argv[1]) if len(sys.argv) > 1 else None
-    run_simulation_and_plot(csv_path, block_id=block_id)
+    run_simulation_and_plot(str(csv_path), block_id=block_id)
