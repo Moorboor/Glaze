@@ -423,6 +423,7 @@ def run_simulation_and_plot(csv_path, block_id=None):
 
 if __name__ == '__main__':
     # Load the data from the specified CSV path
-    csv_path = './triangle-data/evan-standard.csv'
+    #csv_path = './triangle-data/evan-standard.csv'
+    csv_path = 'data/participants.csv'
     block_id = int(sys.argv[1]) if len(sys.argv) > 1 else None
     run_simulation_and_plot(csv_path, block_id=block_id)
