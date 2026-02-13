@@ -45,7 +45,6 @@ Glaze/
     ├── <name>/                       # each contributor keeps their code here
     │   └── ...                       # personal implementation files
     ├── evan/                         # current contributor implementation example
-    │   ├── app.py
     │   └── glaze.py
     └── old/                          # legacy/reference code and notebook
         ├── Group_9_Glaze_2015.ipynb
