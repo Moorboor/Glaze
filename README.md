@@ -15,6 +15,20 @@ Use this workflow:
 2. Commit and push your work in your own branch.
 3. When your task is finished, merge your changes into the `main` branch.
 
+## Before Merging to `main`
+
+Before you merge your work into `main`, complete this checklist:
+
+1. Sync your branch with the latest `main`:
+   - `git fetch origin`
+   - `git rebase origin/main` (or `git merge origin/main`)
+2. Keep your changes inside your own folder (`src/<your-name>/`) unless a shared-file change is required.
+3. Run your code and verify it works end-to-end for your part.
+4. Make sure notebook outputs are stripped and no temporary/debug files are included.
+5. Review your diff (`git diff --stat` and `git diff`) and remove accidental changes.
+6. Commit with a clear message and push your branch.
+7. Merge into `main` only after conflicts are resolved and the branch is clean.
+
 ## Project Structure
 
 ```text
