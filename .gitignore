@@ -1,0 +1,71 @@
+# ------------------------------
+# Local environments
+# ------------------------------
+.conda/
+.venv/
+venv/
+env/
+ENV/
+
+# ------------------------------
+# Python cache / bytecode
+# ------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ------------------------------
+# Jupyter
+# ------------------------------
+.ipynb_checkpoints/
+
+# ------------------------------
+# Test / type-check / lint caches
+# ------------------------------
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.hypothesis/
+.tox/
+.nox/
+
+# ------------------------------
+# Coverage reports
+# ------------------------------
+.coverage
+.coverage.*
+htmlcov/
+
+# ------------------------------
+# Build / packaging artifacts
+# ------------------------------
+build/
+dist/
+site/
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
+
+# ------------------------------
+# Logs and temporary files
+# ------------------------------
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# ------------------------------
+# IDE / editor settings
+# ------------------------------
+.vscode/
+.idea/
+*.code-workspace
+
+# ------------------------------
+# OS-generated files
+# ------------------------------
+.DS_Store
+Thumbs.db
