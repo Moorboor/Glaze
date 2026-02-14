@@ -12,42 +12,38 @@ import pandas as pd
 
 # Run this file directly via `python src/elias/elias_ddm.py`.
 try:
-    from evan_and_old_code_snapshots.evan.glaze import psi_function, simulate_trial
+    from evan.glaze import psi_function, simulate_trial
 except ModuleNotFoundError:
-    elias_src_root = Path(__file__).resolve().parent
-    if str(elias_src_root) not in sys.path:
-        sys.path.insert(0, str(elias_src_root))
-    from evan_and_old_code_snapshots.evan.glaze import psi_function, simulate_trial
+    src_root = Path(__file__).resolve().parents[1]
+    if str(src_root) not in sys.path:
+        sys.path.insert(0, str(src_root))
+    from evan.glaze import psi_function, simulate_trial
+
+try:
+    from common_helpers.preprocessing import (
+        NUMERIC_INPUT_COLUMNS as SHARED_NUMERIC_INPUT_COLUMNS,
+        PREPROCESS_REQUIRED_COLUMNS as SHARED_PREPROCESS_REQUIRED_COLUMNS,
+        REQUIRED_INPUT_COLUMNS as SHARED_REQUIRED_INPUT_COLUMNS,
+        load_participant_data as shared_load_participant_data,
+        preprocess_loaded_participant_data as shared_preprocess_loaded_participant_data,
+    )
+except ModuleNotFoundError:
+    src_root = Path(__file__).resolve().parents[1]
+    if str(src_root) not in sys.path:
+        sys.path.insert(0, str(src_root))
+    from common_helpers.preprocessing import (
+        NUMERIC_INPUT_COLUMNS as SHARED_NUMERIC_INPUT_COLUMNS,
+        PREPROCESS_REQUIRED_COLUMNS as SHARED_PREPROCESS_REQUIRED_COLUMNS,
+        REQUIRED_INPUT_COLUMNS as SHARED_REQUIRED_INPUT_COLUMNS,
+        load_participant_data as shared_load_participant_data,
+        preprocess_loaded_participant_data as shared_preprocess_loaded_participant_data,
+    )
 
 
 EPSILON = 1e-9
 
-REQUIRED_INPUT_COLUMNS: tuple[str, ...] = (
-    "participant_id",
-    "block_id",
-    "trial_index",
-    "hazard_rate",
-    "noise_sigma",
-    "LLR",
-    "choice",
-    "correct_side",
-    "reaction_time_ms",
-    "belief_L",
-    "subjective_h_snapshot",
-)
-
-NUMERIC_INPUT_COLUMNS: tuple[str, ...] = (
-    "block_id",
-    "trial_index",
-    "hazard_rate",
-    "noise_sigma",
-    "LLR",
-    "choice",
-    "correct_side",
-    "reaction_time_ms",
-    "belief_L",
-    "subjective_h_snapshot",
-)
+REQUIRED_INPUT_COLUMNS: tuple[str, ...] = SHARED_REQUIRED_INPUT_COLUMNS
+NUMERIC_INPUT_COLUMNS: tuple[str, ...] = SHARED_NUMERIC_INPUT_COLUMNS
 
 MODEL_READY_COLUMNS: tuple[str, ...] = (
     "row_id",
@@ -61,6 +57,8 @@ MODEL_READY_COLUMNS: tuple[str, ...] = (
     "belief_L",
     "prev_observed_belief_L",
 )
+
+PREPROCESS_REQUIRED_COLUMNS: tuple[str, ...] = SHARED_PREPROCESS_REQUIRED_COLUMNS
 
 
 def _resolve_csv_path(csv_path: str | Path) -> Path:
@@ -208,71 +206,66 @@ def load_participant_data(
         ValueError: If required columns are missing, filters remove all rows, or
             reset/hazard inputs are invalid.
     """
-    reset_on = _validate_reset_on(reset_on)
-
-    resolved_csv_path = _resolve_csv_path(csv_path)
-    df = pd.read_csv(resolved_csv_path)
-
-    _validate_required_columns(df, REQUIRED_INPUT_COLUMNS, context="data loading")
-
-    if hazard_col not in df.columns:
-        raise ValueError(
-            f"Invalid hazard_col '{hazard_col}'. Available columns: {list(df.columns)}"
-        )
-
-    df = df.copy()
-    df["participant_id"] = df["participant_id"].astype(str)
-
-    if participant_ids is not None:
-        participant_ids_str = {str(pid) for pid in participant_ids}
-        df = df[df["participant_id"].isin(participant_ids_str)].copy()
-        if df.empty:
-            raise ValueError(
-                f"No rows remaining after participant filter {sorted(participant_ids_str)}"
-            )
-
-    df = _coerce_numeric_columns(df, NUMERIC_INPUT_COLUMNS)
-
-    cols_to_check = list(NUMERIC_INPUT_COLUMNS)
-    if hazard_col not in cols_to_check:
-        cols_to_check.append(hazard_col)
-
-    df = _drop_non_finite_rows(df, cols_to_check, context="data loading")
-    if df.empty:
-        raise ValueError("All rows were dropped due to non-finite values.")
-
-    df = df.sort_values(["participant_id", "block_id", "trial_index"]).reset_index(
-        drop=True
+    return shared_load_participant_data(
+        csv_path=csv_path,
+        participant_ids=participant_ids,
+        hazard_col=hazard_col,
+        reset_on=reset_on,
     )
 
-    df["H"] = pd.to_numeric(df[hazard_col], errors="coerce")
-    df = _drop_non_finite_rows(df, ["H"], context="hazard assignment")
 
-    participant_changed = df["participant_id"] != df["participant_id"].shift(1)
-    block_changed = (df["block_id"] != df["block_id"].shift(1)) | participant_changed
+def preprocess_loaded_participant_data(
+    df_loaded: pd.DataFrame,
+    *,
+    required_cols: tuple[str, ...] = PREPROCESS_REQUIRED_COLUMNS,
+    min_rt_ms: float = 150.0,
+    max_rt_ms: float = 5000.0,
+    train_trial_max_index: int = 30,
+    expected_blocks_per_participant: int = 4,
+    nominal_trials_per_block_before: int = 40,
+) -> dict[str, object]:
+    """Apply notebook preprocessing, exclusions, split labels, and overview tables.
 
-    reset_state = pd.Series(False, index=df.index)
-    if "participant" in reset_on:
-        reset_state |= participant_changed
-    if "block" in reset_on:
-        reset_state |= block_changed
+    This helper mirrors the section-2 notebook logic so the notebook can stay
+    concise while preserving behavior.
 
-    if not df.empty:
-        reset_state.iloc[0] = True
+    Args:
+        df_loaded: DataFrame returned by `load_participant_data`.
+        required_cols: Columns that must parse to finite numeric values.
+        min_rt_ms: Inclusive minimum allowed reaction time in milliseconds.
+        max_rt_ms: Inclusive maximum allowed reaction time in milliseconds.
+        train_trial_max_index: Trial index cutoff for split labels.
+            Trials `<= train_trial_max_index` are labeled `TRAIN`,
+            higher trial indices are labeled `TEST`.
+        expected_blocks_per_participant: Expected number of blocks for checks.
+        nominal_trials_per_block_before: Nominal trial count per block before
+            exclusions for structure checks.
 
-    df["reset_state"] = reset_state.to_numpy(dtype=bool)
+    Returns:
+        Dictionary containing:
+            - `df_all`: Filtered/sorted DataFrame with `split` labels.
+            - `removed_rows_df`: Rows removed by validity or RT filters.
+            - `preprocessing_overview_table`: Participant-block table with
+              `n_train`, `n_test`, `n_dropped`, `n_before`, `n_after`.
+            - `participant_structure_table`: Participant-level structure checks.
+            - `blocks_per_participant`: Series with block counts after exclusions.
+            - `before_n`: Row count before exclusions.
+            - `after_n`: Row count after exclusions.
+            - `removed_n`: Number of excluded rows.
+            - `safety_check_changed_data`: Whether exclusions removed any rows.
 
-    df["prev_observed_belief_L"] = df["belief_L"].shift(1)
-    df.loc[df["reset_state"], "prev_observed_belief_L"] = 0.0
-    df["prev_observed_belief_L"] = (
-        pd.to_numeric(df["prev_observed_belief_L"], errors="coerce")
-        .fillna(0.0)
-        .astype(float)
+    Raises:
+        ValueError: If required columns are missing or RT bounds are invalid.
+    """
+    return shared_preprocess_loaded_participant_data(
+        df_loaded,
+        required_cols=required_cols,
+        min_rt_ms=min_rt_ms,
+        max_rt_ms=max_rt_ms,
+        train_trial_max_index=train_trial_max_index,
+        expected_blocks_per_participant=expected_blocks_per_participant,
+        nominal_trials_per_block_before=nominal_trials_per_block_before,
     )
-
-    df["row_id"] = np.arange(len(df), dtype=int)
-
-    return df.reset_index(drop=True)
 
 
 def _prepare_model_input(df: pd.DataFrame) -> pd.DataFrame:
