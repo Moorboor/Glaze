@@ -1,5 +1,7 @@
-# Embedded Glaze analysis datasets copied from group_9_glaze_2015.ipynb.
+# Embedded Glaze analysis datasets copied from group_9_glaze_2015.ipynb in 
+# Google Colab.
 
+import csv
 from pathlib import Path
 
 analysis_data = """
@@ -151,9 +153,7 @@ block_id,trial_index,hazard_rate,noise_sigma,LLR,choice,correct_side,reaction_ti
 4,38,0.3,0.2400,8.737786,1,1,411,8.415171,0.5810
 4,39,0.3,0.2400,12.787129,1,1,331,12.460396,0.5810
 4,40,0.3,0.2400,9.278616,1,1,348,8.951739,0.5810
-""".strip().split(
-    "\n"
-)
+""".strip().split('\n')
 
 two_analysis_data = """
 block_id,trial_index,hazard_rate,noise_sigma,LLR,choice,correct_side,reaction_time_ms,belief_L,subjective_h_snapshot
@@ -317,11 +317,10 @@ block_id,trial_index,hazard_rate,noise_sigma,LLR,choice,correct_side,reaction_ti
 4,38,0.5,0.2400,-7.479292,0,0,368,-4.907890,0.0610
 4,39,0.5,0.2400,7.144472,1,1,315,4.664756,0.0710
 4,40,0.5,0.2400,6.239756,1,1,441,8.695655,0.0710
-""".strip().split(
-    "\n"
-)
+""".strip().split('\n')
 
-three_analysis_data = """block_id,trial_index,hazard_rate,noise_sigma,LLR,choice,correct_side,reaction_time_ms,belief_L,subjective_h_snapshot
+three_analysis_data="""
+block_id,trial_index,hazard_rate,noise_sigma,LLR,choice,correct_side,reaction_time_ms,belief_L,subjective_h_snapshot
 1,1,0.05,0.4100,3.226995,1,1,3178,3.226995,0.0010
 1,2,0.05,0.4100,-2.953524,0,1,9783,-2.307557,0.9910
 1,3,0.05,0.4100,1.917467,1,1,1569,1.348992,0.9910
@@ -481,9 +480,8 @@ three_analysis_data = """block_id,trial_index,hazard_rate,noise_sigma,LLR,choice
 4,37,0.5,0.4100,-3.215200,0,0,954,-3.332034,0.3710
 4,38,0.5,0.4100,-4.229171,0,0,685,-4.798994,0.3710
 4,39,0.5,0.4100,-0.850482,0,0,595,-1.454456,0.3510
-4,40,0.5,0.4100,-5.353956,0,0,638,-5.728612,0.3510""".strip().split(
-    "\n"
-)
+4,40,0.5,0.4100,-5.353956,0,0,638,-5.728612,0.3510""".strip().split('\n')
+
 
 ANALYSIS_DATASETS = {
     "P01": analysis_data,
@@ -492,21 +490,69 @@ ANALYSIS_DATASETS = {
 }
 
 
-def write_dataset_csv(
-    participant_id: str = "P01", output_filename: str = "participants.csv"
-) -> Path:
-    """Write one embedded participant dataset to a CSV file in <repo>/data."""
-    if participant_id not in ANALYSIS_DATASETS:
-        raise ValueError(
-            f"Unknown participant_id '{participant_id}'. Available: {sorted(ANALYSIS_DATASETS)}"
-        )
+def write_dataset_csv(output_filename: str = "participants.csv") -> Path:
+    """Write all embedded participant datasets into one CSV file in `<repo>/data`.
 
+    Args:
+        output_filename: File name for the merged CSV written into the repository
+            `data` directory.
+
+    Returns:
+        Path: Absolute path to the written CSV file.
+
+    Raises:
+        ValueError: If an embedded dataset has no header or if participant
+            datasets do not share exactly the same CSV columns.
+    """
+    # Resolve the repository root relative to this module so calls work from any cwd.
     repo_root = Path(__file__).resolve().parent.parent.parent
+    # Point to the canonical data directory used by the project.
     data_dir = repo_root / "data"
+    # Ensure the data directory exists before attempting to write the CSV file.
     data_dir.mkdir(parents=True, exist_ok=True)
+    # Build the final output path from the data directory and user-provided filename.
     output_path = data_dir / output_filename
-    csv_lines = ANALYSIS_DATASETS[participant_id]
-    output_path.write_text("\n".join(csv_lines) + "\n", encoding="utf-8")
+
+    # Keep the first dataset header as the canonical schema for all participants.
+    base_fieldnames: list[str] | None = None
+    # Collect all participant-tagged rows before writing a single merged CSV.
+    combined_rows: list[dict[str, str]] = []
+
+    # Iterate over each embedded participant dataset in declared dictionary order.
+    for pid, csv_lines in ANALYSIS_DATASETS.items():
+        # Parse each participant's CSV lines into dictionaries keyed by column names.
+        reader = csv.DictReader(csv_lines)
+        # Read the parsed column list so we can validate schema consistency.
+        current_fieldnames = reader.fieldnames
+        # Stop early if a dataset is malformed and does not provide a CSV header.
+        if not current_fieldnames:
+            raise ValueError(f"Dataset '{pid}' is missing a valid CSV header.")
+        # Use the first dataset columns as the schema reference.
+        if base_fieldnames is None:
+            base_fieldnames = current_fieldnames
+        # Enforce identical columns so merged rows stay aligned and reliable.
+        elif current_fieldnames != base_fieldnames:
+            raise ValueError(
+                f"Dataset '{pid}' columns {current_fieldnames} do not match expected {base_fieldnames}."
+            )
+        # Add participant labels to every row so rows remain identifiable after merging.
+        for row in reader:
+            # Prefix each row with participant_id while preserving original trial columns.
+            combined_rows.append({"participant_id": pid, **row})
+
+    # Place participant_id first so downstream filtering/grouping is straightforward.
+    output_fieldnames = ["participant_id", *(base_fieldnames or [])]
+
+    # Open output with newline control to avoid platform-specific blank CSV lines.
+    with output_path.open("w", newline="", encoding="utf-8") as csv_file:
+        # Use DictWriter to map row dictionaries to a stable header order.
+        writer = csv.DictWriter(csv_file, fieldnames=output_fieldnames)
+        # Write the merged header exactly once.
+        writer.writeheader()
+        # Write all accumulated participant rows into the output file.
+        writer.writerows(combined_rows)
+
+    # Return the output path so callers can log or chain subsequent processing.
     return output_path
 
 
