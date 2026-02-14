@@ -1,0 +1,20 @@
+Elias Snapshot Package: evan_and_old_code_snapshots
+
+Purpose
+- This folder is a local, reproducible snapshot of selected code from `src/evan` and `src/old`.
+- It exists so `src/elias` workflows can run without runtime imports from other contributor folders.
+
+Copied source files and destinations
+- `src/evan/glaze.py` -> `src/elias/evan_and_old_code_snapshots/evan/glaze.py`
+- `src/old/glaze_group_pipeline_data.py` -> `src/elias/evan_and_old_code_snapshots/old/glaze_group_pipeline_data.py`
+- `src/old/group_9_glaze_2015.py` -> `src/elias/evan_and_old_code_snapshots/old/group_9_glaze_2015.py`
+
+Allowed edits in snapshots
+- Path resolution fixes.
+- Import path fixes.
+- Save-location/path-output fixes.
+- Core model/algorithm behavior should remain source-equivalent.
+
+Decoupling guarantee for Elias code
+- Runtime code in `src/elias` should import model primitives from this snapshot package,
+  not from `src/evan` or `src/old`.
