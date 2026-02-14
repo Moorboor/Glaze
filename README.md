@@ -36,7 +36,7 @@ Glaze/
 ├── README.md                         # project setup and workflow notes
 ├── requirements.txt                  # Python dependencies
 ├── data/
-│   └── participants.csv              # participant metadata
+│   └── participants.csv              # participant data of all participants
 ├── triangle-data/                    # input datasets used by implementations
 │   ├── evan-short.csv
 │   ├── evan-standard.csv
