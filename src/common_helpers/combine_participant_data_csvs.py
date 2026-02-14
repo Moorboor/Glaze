@@ -7,9 +7,9 @@ from typing import Sequence
 
 
 DEFAULT_SOURCE_CSV_PATHS: tuple[str, ...] = (
-    "data/elias-standard.csv",
-    "data/evan-standard.csv",
-    "data/maik-standard.csv",
+    "data/elias.csv",
+    "data/evan.csv",
+    "data/maik.csv",
 )
 
 DEFAULT_PARTICIPANT_IDS: tuple[str, ...] = ("P01", "P02", "P03")

@@ -37,9 +37,9 @@ Glaze/
 ├── requirements.txt                  # Python dependencies
 ├── data/
 │   ├── participants.csv              # merged dataset with participant_id column
-│   ├── elias-standard.csv            # participant source CSV
-│   ├── evan-standard.csv             # participant source CSV
-│   └── maik-standard.csv             # participant source CSV
+│   ├── elias.csv                     # participant source CSV (160 rows)
+│   ├── evan.csv                      # participant source CSV (short, 147 rows)
+│   └── maik.csv                      # participant source CSV (160 rows)
 └── src/
     ├── common_helpers/               # shared combine + preprocessing utilities
     │   ├── combine_participant_data_csvs.py
@@ -58,9 +58,15 @@ Glaze/
 
 The current shared data flow is:
 
-1. Source participant CSVs live in `data/elias-standard.csv`, `data/evan-standard.csv`, and `data/maik-standard.csv`.
+1. Source participant CSVs live in `data/elias.csv`, `data/evan.csv`, and `data/maik.csv`.
 2. `src/common_helpers/combine_participant_data_csvs.py` can merge them into `data/participants.csv` with assigned participant IDs (`P01`, `P02`, `P03`).
 3. `src/common_helpers/preprocessing.py` provides shared load/preprocessing functions used by `src/elias/elias_ddm.py` and the Elias notebook.
+
+Current merged dataset expectation:
+- `P01` (`elias.csv`): 160 rows
+- `P02` (`evan.csv`): 147 rows (short block 1)
+- `P03` (`maik.csv`): 160 rows
+- Total before exclusions in `participants.csv`: 467 rows
 
 ## Environment Setup
 
