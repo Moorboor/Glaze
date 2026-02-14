@@ -36,21 +36,31 @@ Glaze/
 ├── README.md                         # project setup and workflow notes
 ├── requirements.txt                  # Python dependencies
 ├── data/
-│   └── participants.csv              # participant data of all participants with participant_id column
-├── triangle-data/                    # input datasets used by implementations
-│   ├── evan-short.csv
-│   ├── evan-standard.csv
-│   └── maik-standard.csv
+│   ├── participants.csv              # merged dataset with participant_id column
+│   ├── elias-standard.csv            # participant source CSV
+│   ├── evan-standard.csv             # participant source CSV
+│   └── maik-standard.csv             # participant source CSV
 └── src/
-    ├── <name>/                       # each contributor keeps their code here
-    │   └── ...                       # personal implementation files
-    ├── evan/                         # current contributor implementation example
+    ├── common_helpers/               # shared combine + preprocessing utilities
+    │   ├── combine_participant_data_csvs.py
+    │   └── preprocessing.py
+    ├── elias/                        # participant-wise model comparison workflow
+    │   ├── elias_ddm.py
+    │   └── elias_notebook.ipynb
+    ├── evan/                         # Glaze model primitives used by model wrappers
     │   └── glaze.py
     └── old/                          # legacy/reference code and notebook
         ├── Group_9_Glaze_2015.ipynb
-        ├── glaze_group_pipeline_data.py
         └── group_9_glaze_2015.py
 ```
+
+## Data Pipeline
+
+The current shared data flow is:
+
+1. Source participant CSVs live in `data/elias-standard.csv`, `data/evan-standard.csv`, and `data/maik-standard.csv`.
+2. `src/common_helpers/combine_participant_data_csvs.py` can merge them into `data/participants.csv` with assigned participant IDs (`P01`, `P02`, `P03`).
+3. `src/common_helpers/preprocessing.py` provides shared load/preprocessing functions used by `src/elias/elias_ddm.py` and the Elias notebook.
 
 ## Environment Setup
 
