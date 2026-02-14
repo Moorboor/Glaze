@@ -37,7 +37,7 @@ def simulate_trial(
     H,
     belief_threshold,
     max_duration_ms,
-    dt=0.01,
+    dt_ms=10.0,
     noise_std=0.0,
     decision_time_ms=0.0,
     noise_gain=1.0,
@@ -57,7 +57,7 @@ def simulate_trial(
         H (float): Hazard rate (subjective or objective).
         belief_threshold (float): Magnitude of belief required to make a decision.
         max_duration_ms (float): Maximum duration of the trial in milliseconds.
-        dt (float): Integration time step in seconds.
+        dt_ms (float): Integration time step in milliseconds.
         noise_std (float): Standard deviation of the Wiener process noise.
         decision_time_ms (float): Minimum time (delay) before a decision can be registered.
         noise_gain (float): Multiplier for the noise magnitude to force threshold crossings.
@@ -71,7 +71,7 @@ def simulate_trial(
             - 'trajectory': Array of belief values over time.
             - 'time_points_ms': Array of time points in ms.
     """
-    max_duration_sec = max_duration_ms / 1000.0
+    dt_sec = dt_ms / 1000.0
 
     # 1. Calculate Prior (The Starting Line) using the discrete hazard update
     psi = psi_function(prev_belief_L, H)
@@ -89,24 +89,24 @@ def simulate_trial(
     time_points = [0.0]
 
     L_current = psi
-    time_current = 0.0
+    time_current_ms = 0.0
     decision = 0
 
     # 2. Continuous Evolution (The Race)
-    while time_current < max_duration_sec:
+    while time_current_ms < max_duration_ms:
         # A. The Leak (Stability Term)
-        # dL = -2 * lambda * sinh(L) * dt
+        # dL = -2 * lambda * sinh(L) * dt_sec
         # Here we use H as the lambda rate, consistent with Glaze et al. (2015) Eq 4
         # Clamp L for sinh calculation to prevent numerical explosion (instability)
-        # sinh(10) is ~11000, which is plenty of restoring force without overflowing with dt=0.01
+        # sinh(10) is ~11000, which is plenty of restoring force without overflowing.
         L_safe = np.clip(L_current, -10, 10)
-        deterministic_change = -2 * H * np.sinh(L_safe) * dt
+        deterministic_change = -2 * H * np.sinh(L_safe) * dt_sec
 
         # B. The Evidence (Drift Term)
-        drift = current_LLR * dt
+        drift = current_LLR * dt_sec
 
         # C. The Noise (Diffusion Term)
-        diffusion = noise_gain * noise_std * np.sqrt(dt) * np.random.randn()
+        diffusion = noise_gain * noise_std * np.sqrt(dt_sec) * np.random.randn()
 
         # Update belief and time
         L_current += deterministic_change + drift + diffusion
@@ -114,18 +114,18 @@ def simulate_trial(
         # Clamp belief to prevent plot scaling issues if instability occurs
         L_current = np.clip(L_current, -100, 100)
         
-        time_current += dt
+        time_current_ms += dt_ms
 
         trajectory.append(L_current)
-        time_points.append(time_current * 1000.0)
+        time_points.append(time_current_ms)
 
         # Check for decision threshold crossing
-        if abs(L_current) >= belief_threshold and (time_current * 1000.0) >= decision_time_ms:
+        if abs(L_current) >= belief_threshold and time_current_ms >= decision_time_ms:
             decision = np.sign(L_current)
             break
 
     return {
-        'reaction_time_ms': time_current * 1000.0,
+        'reaction_time_ms': time_current_ms,
         'final_belief': L_current,
         'decision': decision,
         'trajectory': np.array(trajectory),
@@ -347,7 +347,7 @@ def run_simulation_and_plot(csv_path, block_id=None):
     # In a real scenario, these might be fitted or taken from 'subjective_h_snapshot'
     # threshold is now calculated per block
     noise_std = 0.7  # Standard deviation for the Wiener process
-    max_duration = 1500  # 5 seconds max
+    max_duration = 1500  # 1500 ms max
     decision_time_ms = 50.0 # Minimum decision time delay
     noise_gain = 3.5 # Tweak this to force decisions (e.g., set to 2.0 or 3.0)
 
@@ -389,6 +389,7 @@ def run_simulation_and_plot(csv_path, block_id=None):
                 H=row['subjective_h_snapshot'],
                 belief_threshold=threshold,
                 max_duration_ms=max_duration,
+                dt_ms=10.0,
                 noise_std=noise_std,
                 decision_time_ms=decision_time_ms,
                 noise_gain=noise_gain,

@@ -10,7 +10,7 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
-# Allow running this file directly via `python src/elias/elias-ddm.py`.
+# Run this file directly via `python src/elias/elias_ddm.py`.
 try:
     from evan_and_old_code_snapshots.evan.glaze import psi_function, simulate_trial
 except ModuleNotFoundError:
@@ -64,7 +64,17 @@ MODEL_READY_COLUMNS: tuple[str, ...] = (
 
 
 def _resolve_csv_path(csv_path: str | Path) -> Path:
-    """Resolve CSV path from cwd or repository root."""
+    """Resolve a CSV path from cwd or repository root.
+
+    Args:
+        csv_path: CSV path to resolve. Can be absolute or relative.
+
+    Returns:
+        A resolved path that exists on disk.
+
+    Raises:
+        FileNotFoundError: If the path cannot be resolved to an existing file.
+    """
     path = Path(csv_path)
     if path.exists():
         return path
@@ -83,7 +93,16 @@ def _validate_required_columns(
     *,
     context: str,
 ) -> None:
-    """Validate that all required columns are present."""
+    """Validate that a DataFrame contains all required columns.
+
+    Args:
+        df: Input DataFrame to validate.
+        required_columns: Required column names.
+        context: Short context string used in error messages.
+
+    Raises:
+        ValueError: If one or more required columns are missing.
+    """
     missing = sorted(set(required_columns) - set(df.columns))
     if missing:
         raise ValueError(
@@ -93,7 +112,16 @@ def _validate_required_columns(
 
 
 def _coerce_numeric_columns(df: pd.DataFrame, columns: Iterable[str]) -> pd.DataFrame:
-    """Coerce selected columns to numeric dtype with NaN on parse errors."""
+    """Coerce selected columns to numeric dtype.
+
+    Args:
+        df: DataFrame containing columns to convert.
+        columns: Column names to coerce with `pd.to_numeric`.
+
+    Returns:
+        The same DataFrame with requested columns converted. Invalid parses
+        become `NaN`.
+    """
     for col in columns:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     return df
@@ -105,7 +133,17 @@ def _drop_non_finite_rows(
     *,
     context: str,
 ) -> pd.DataFrame:
-    """Drop rows containing NaN/Inf in required numeric columns and warn."""
+    """Drop rows containing non-finite numeric values.
+
+    Args:
+        df: Input DataFrame.
+        numeric_columns: Columns that must be finite.
+        context: Short context string used in warning messages.
+
+    Returns:
+        A filtered DataFrame. If non-finite rows are found, returns a copied
+        DataFrame with those rows removed.
+    """
     cols = list(numeric_columns)
     finite_mask = np.isfinite(df[cols].to_numpy(dtype=float)).all(axis=1)
     dropped = int((~finite_mask).sum())
@@ -122,7 +160,18 @@ def _drop_non_finite_rows(
 
 
 def _validate_reset_on(reset_on: tuple[str, ...]) -> tuple[str, ...]:
-    """Validate reset policy flags."""
+    """Validate reset policy flags.
+
+    Args:
+        reset_on: Reset policy tuple. Allowed values are `"participant"` and
+            `"block"`.
+
+    Returns:
+        The validated reset policy tuple.
+
+    Raises:
+        ValueError: If `reset_on` contains unsupported values.
+    """
     allowed = {"participant", "block"}
     invalid = sorted(set(reset_on) - allowed)
     if invalid:
@@ -138,7 +187,7 @@ def load_participant_data(
     hazard_col: str = "subjective_h_snapshot",
     reset_on: tuple[str, ...] = ("participant", "block"),
 ) -> pd.DataFrame:
-    """Load participant data, normalize types, and derive reset/prior-state columns.
+    """Load participant data and derive model-ready state columns.
 
     Args:
         csv_path: Path to the participant CSV.
@@ -227,7 +276,18 @@ def load_participant_data(
 
 
 def _prepare_model_input(df: pd.DataFrame) -> pd.DataFrame:
-    """Validate and normalize model input DataFrame."""
+    """Validate and normalize model input DataFrame.
+
+    Args:
+        df: Input DataFrame expected to contain `MODEL_READY_COLUMNS`.
+
+    Returns:
+        A normalized DataFrame sorted by participant/block/trial with numeric
+        columns coerced and non-finite rows removed.
+
+    Raises:
+        ValueError: If required model columns are missing.
+    """
     _validate_required_columns(df, MODEL_READY_COLUMNS, context="model simulation")
 
     model_df = df.copy()
@@ -254,7 +314,18 @@ def _attach_thresholds(
     df: pd.DataFrame,
     threshold_mode: str,
 ) -> pd.DataFrame:
-    """Attach per participant-block thresholds."""
+    """Attach per participant-block thresholds.
+
+    Args:
+        df: Model input DataFrame.
+        threshold_mode: Threshold policy identifier.
+
+    Returns:
+        DataFrame with an added `used_threshold` column.
+
+    Raises:
+        ValueError: If `threshold_mode` is unsupported.
+    """
     if threshold_mode != "participant_block_mean_abs_belief":
         raise ValueError(
             f"Unsupported threshold_mode '{threshold_mode}'. "
@@ -275,7 +346,14 @@ def _attach_thresholds(
 
 @contextmanager
 def _temporary_numpy_seed(seed: int):
-    """Temporarily set and restore numpy global RNG state."""
+    """Temporarily set and restore NumPy global RNG state.
+
+    Args:
+        seed: Temporary seed value applied inside the context.
+
+    Yields:
+        None.
+    """
     state = np.random.get_state()
     np.random.seed(seed)
     try:
@@ -290,18 +368,37 @@ def _run_continuous_model(
     model_name: str,
     stop_on_sat: bool,
     max_duration_ms: float,
-    dt: float,
+    dt_ms: float,
     noise_std: float,
     decision_time_ms: float,
     noise_gain: float,
     threshold_mode: str,
     random_seed: int,
 ) -> pd.DataFrame:
-    """Run one continuous model variant using `simulate_trial`."""
+    """Run one continuous-model variant using `simulate_trial`.
+
+    Args:
+        df: Model-ready input DataFrame.
+        model_name: Output model label.
+        stop_on_sat: Whether to use saturation-based stopping.
+        max_duration_ms: Maximum trial duration in milliseconds.
+        dt_ms: Integration step size in milliseconds.
+        noise_std: Noise standard deviation for accumulation dynamics.
+        decision_time_ms: Minimum decision time in milliseconds.
+        noise_gain: Multiplicative gain applied to noise.
+        threshold_mode: Threshold policy identifier.
+        random_seed: Seed for deterministic simulation.
+
+    Returns:
+        Standardized per-trial predictions and metadata for the model.
+
+    Raises:
+        ValueError: If `max_duration_ms` or `dt_ms` are non-positive.
+    """
     if max_duration_ms <= 0:
         raise ValueError("max_duration_ms must be > 0")
-    if dt <= 0:
-        raise ValueError("dt must be > 0")
+    if dt_ms <= 0:
+        raise ValueError("dt_ms must be > 0")
 
     model_df = _prepare_model_input(df)
     model_df = _attach_thresholds(model_df, threshold_mode=threshold_mode)
@@ -316,7 +413,7 @@ def _run_continuous_model(
                 H=float(row.H),
                 belief_threshold=float(row.used_threshold),
                 max_duration_ms=float(max_duration_ms),
-                dt=float(dt),
+                dt_ms=float(dt_ms),
                 noise_std=float(noise_std),
                 decision_time_ms=float(decision_time_ms),
                 noise_gain=float(noise_gain),
@@ -342,7 +439,7 @@ def _run_continuous_model(
                     "model_name": model_name,
                     "param_stop_on_sat": bool(stop_on_sat),
                     "param_max_duration_ms": float(max_duration_ms),
-                    "param_dt": float(dt),
+                    "param_dt_ms": float(dt_ms),
                     "param_noise_std": float(noise_std),
                     "param_decision_time_ms": float(decision_time_ms),
                     "param_noise_gain": float(noise_gain),
@@ -358,20 +455,34 @@ def run_model_a_threshold(
     df: pd.DataFrame,
     *,
     max_duration_ms: float = 1500.0,
-    dt: float = 0.01,
+    dt_ms: float = 10.0,
     noise_std: float = 0.7,
     decision_time_ms: float = 50.0,
     noise_gain: float = 3.5,
     threshold_mode: str = "participant_block_mean_abs_belief",
     random_seed: int = 42,
 ) -> pd.DataFrame:
-    """Run Model A: continuous model with fixed threshold stopping."""
+    """Run Model A (continuous threshold variant).
+
+    Args:
+        df: Model-ready input DataFrame.
+        max_duration_ms: Maximum trial duration in milliseconds.
+        dt_ms: Integration step size in milliseconds.
+        noise_std: Noise standard deviation for accumulation dynamics.
+        decision_time_ms: Minimum decision time in milliseconds.
+        noise_gain: Multiplicative gain applied to noise.
+        threshold_mode: Threshold policy identifier.
+        random_seed: Seed for deterministic simulation.
+
+    Returns:
+        Standardized per-trial predictions for Model A.
+    """
     return _run_continuous_model(
         df,
         model_name="cont_threshold",
         stop_on_sat=False,
         max_duration_ms=max_duration_ms,
-        dt=dt,
+        dt_ms=dt_ms,
         noise_std=noise_std,
         decision_time_ms=decision_time_ms,
         noise_gain=noise_gain,
@@ -384,20 +495,34 @@ def run_model_b_asymptote(
     df: pd.DataFrame,
     *,
     max_duration_ms: float = 1500.0,
-    dt: float = 0.01,
+    dt_ms: float = 10.0,
     noise_std: float = 0.7,
     decision_time_ms: float = 50.0,
     noise_gain: float = 3.5,
     threshold_mode: str = "participant_block_mean_abs_belief",
     random_seed: int = 42,
 ) -> pd.DataFrame:
-    """Run Model B: continuous model with asymptote-based stopping."""
+    """Run Model B (continuous asymptote variant).
+
+    Args:
+        df: Model-ready input DataFrame.
+        max_duration_ms: Maximum trial duration in milliseconds.
+        dt_ms: Integration step size in milliseconds.
+        noise_std: Noise standard deviation for accumulation dynamics.
+        decision_time_ms: Minimum decision time in milliseconds.
+        noise_gain: Multiplicative gain applied to noise.
+        threshold_mode: Threshold policy identifier.
+        random_seed: Seed for deterministic simulation.
+
+    Returns:
+        Standardized per-trial predictions for Model B.
+    """
     return _run_continuous_model(
         df,
         model_name="cont_asymptote",
         stop_on_sat=True,
         max_duration_ms=max_duration_ms,
-        dt=dt,
+        dt_ms=dt_ms,
         noise_std=noise_std,
         decision_time_ms=decision_time_ms,
         noise_gain=noise_gain,
@@ -407,7 +532,14 @@ def run_model_b_asymptote(
 
 
 def _sigmoid(x: float) -> float:
-    """Numerically stable sigmoid."""
+    """Compute a numerically stable sigmoid.
+
+    Args:
+        x: Input scalar.
+
+    Returns:
+        Sigmoid-transformed scalar in `(0, 1)`.
+    """
     clipped = np.clip(x, -60.0, 60.0)
     return float(1.0 / (1.0 + np.exp(-clipped)))
 
@@ -417,33 +549,43 @@ def _simulate_ddm_single_sample(
     v: float,
     a: float,
     z: float,
-    dt: float,
+    dt_ms: float,
     max_duration_ms: float,
     diffusion_sigma: float,
     rng: np.random.Generator,
 ) -> tuple[int, float, float]:
     """Simulate one DDM trajectory until boundary crossing or timeout.
 
+    Args:
+        v: Drift rate.
+        a: Symmetric boundary magnitude.
+        z: Relative start point in `[0, 1]`.
+        dt_ms: Integration step size in milliseconds.
+        max_duration_ms: Timeout duration in milliseconds.
+        diffusion_sigma: Diffusion noise scale.
+        rng: NumPy random generator used for diffusion noise.
+
     Returns:
-        decision: 1, -1, or 0 for timeout
-        rt_ms: decision time in milliseconds (without non-decision time)
-        terminal_x: final decision variable value
+        Tuple of `(decision, rt_ms, terminal_x)` where:
+            - `decision` is `1`, `-1`, or `0` (timeout),
+            - `rt_ms` is decision time in milliseconds (without non-decision time),
+            - `terminal_x` is the final decision variable value.
     """
-    max_duration_sec = max_duration_ms / 1000.0
-    sqrt_dt = np.sqrt(dt)
+    dt_sec = dt_ms / 1000.0
+    sqrt_dt_sec = np.sqrt(dt_sec)
 
     # Map z from [0, 1] to [-a, a]
     x = (2.0 * z - 1.0) * a
-    t = 0.0
+    time_current_ms = 0.0
 
-    while t < max_duration_sec:
-        x += v * dt + diffusion_sigma * sqrt_dt * float(rng.standard_normal())
-        t += dt
+    while time_current_ms < max_duration_ms:
+        x += v * dt_sec + diffusion_sigma * sqrt_dt_sec * float(rng.standard_normal())
+        time_current_ms += dt_ms
 
         if x >= a:
-            return 1, t * 1000.0, x
+            return 1, time_current_ms, x
         if x <= -a:
-            return -1, t * 1000.0, x
+            return -1, time_current_ms, x
 
     return 0, float(max_duration_ms), x
 
@@ -452,7 +594,7 @@ def run_model_c_ddm(
     df: pd.DataFrame,
     *,
     n_samples_per_trial: int = 200,
-    dt: float = 0.005,
+    dt_ms: float = 5.0,
     max_duration_ms: float = 1500.0,
     boundary_a: float = 1.0,
     non_decision_time_ms: float = 200.0,
@@ -462,17 +604,36 @@ def run_model_c_ddm(
     include_rt_samples: bool = False,
     random_seed: int = 42,
 ) -> pd.DataFrame:
-    """Run Model C: standard DDM driven by DNM trial signals.
+    """Run Model C (DDM driven by DNM trial signals).
 
     Mapping:
         Psi_t = psi_function(prev_observed_belief_L_t, H_t)
         z_t = sigmoid(start_k * Psi_t)
         v_t = llr_to_drift_scale * LLR_t
+
+    Args:
+        df: Model-ready input DataFrame.
+        n_samples_per_trial: Monte Carlo samples per trial.
+        dt_ms: Integration step size in milliseconds.
+        max_duration_ms: Timeout duration in milliseconds.
+        boundary_a: Symmetric boundary magnitude.
+        non_decision_time_ms: Non-decision time added to sampled RT.
+        llr_to_drift_scale: Scale from LLR to drift rate.
+        start_k: Scale from Psi to start-point bias.
+        diffusion_sigma: Diffusion noise scale.
+        include_rt_samples: Whether to include raw RT samples in output.
+        random_seed: Seed for deterministic simulation.
+
+    Returns:
+        Standardized per-trial predictions and RT summary statistics.
+
+    Raises:
+        ValueError: If sample count or numeric simulation parameters are invalid.
     """
     if n_samples_per_trial <= 0:
         raise ValueError("n_samples_per_trial must be > 0")
-    if dt <= 0:
-        raise ValueError("dt must be > 0")
+    if dt_ms <= 0:
+        raise ValueError("dt_ms must be > 0")
     if max_duration_ms <= 0:
         raise ValueError("max_duration_ms must be > 0")
     if boundary_a <= 0:
@@ -499,7 +660,7 @@ def run_model_c_ddm(
                 v=v_t,
                 a=float(boundary_a),
                 z=z_t,
-                dt=float(dt),
+                dt_ms=float(dt_ms),
                 max_duration_ms=float(max_duration_ms),
                 diffusion_sigma=float(diffusion_sigma),
                 rng=rng,
@@ -545,7 +706,7 @@ def run_model_c_ddm(
             "pred_rt_q90_ms": float(q90),
             "model_name": "ddm_dnm",
             "param_n_samples_per_trial": int(n_samples_per_trial),
-            "param_dt": float(dt),
+            "param_dt_ms": float(dt_ms),
             "param_max_duration_ms": float(max_duration_ms),
             "param_boundary_a": float(boundary_a),
             "param_non_decision_time_ms": float(non_decision_time_ms),
@@ -571,7 +732,21 @@ def run_all_models_for_participant(
     n_samples_per_trial: int = 200,
     include_rt_samples: bool = False,
 ) -> dict[str, pd.DataFrame]:
-    """Run models A/B/C for one participant and return standardized outputs."""
+    """Run models A, B, and C for one participant.
+
+    Args:
+        df: DataFrame containing one or more participants.
+        participant_id: Participant identifier to simulate.
+        random_seed: Seed for deterministic simulation.
+        n_samples_per_trial: Monte Carlo samples per trial for Model C.
+        include_rt_samples: Whether to include raw RT samples for Model C.
+
+    Returns:
+        Dictionary mapping model names to standardized output DataFrames.
+
+    Raises:
+        ValueError: If `participant_id` is absent from `df`.
+    """
     _validate_required_columns(df, ["participant_id"], context="orchestration")
 
     participant_id_str = str(participant_id)
@@ -599,7 +774,11 @@ def run_all_models_for_participant(
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
-    """Build CLI parser for the smoke-test demo."""
+    """Build CLI parser for the smoke-test demo.
+
+    Returns:
+        Configured argument parser for module CLI execution.
+    """
     parser = argparse.ArgumentParser(description="Run participant-wise model simulations.")
     parser.add_argument(
         "--csv-path",

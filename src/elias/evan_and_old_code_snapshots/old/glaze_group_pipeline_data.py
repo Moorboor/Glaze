@@ -1,6 +1,9 @@
 # Embedded Glaze analysis datasets copied from group_9_glaze_2015.ipynb in 
 # Google Colab.
 
+# run with:
+# python3 src/elias/evan_and_old_code_snapshots/old/glaze_group_pipeline_data.py 
+
 import csv
 from pathlib import Path
 
@@ -506,8 +509,11 @@ def write_dataset_csv(output_filename: str = "participants.csv") -> Path:
     """
     # Resolve the repository root relative to this module so calls work from any cwd.
     repo_root = Path(__file__).resolve().parent.parent.parent.parent.parent
-    # Point to the canonical data directory used by the project.
+
+    # Comment one option out to choose where to store data:
+    # #Point to the canonical data directory used by the project.
     data_dir = repo_root / "data"
+
     # Ensure the data directory exists before attempting to write the CSV file.
     data_dir.mkdir(parents=True, exist_ok=True)
     # Build the final output path from the data directory and user-provided filename.
