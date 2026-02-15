@@ -45,7 +45,16 @@ Glaze/
     │   ├── combine_participant_data_csvs.py
     │   └── preprocessing.py
     ├── elias/                        # participant-wise model comparison workflow
-    │   ├── elias_ddm.py
+    │   ├── elias_models/             # modular Elias modeling package
+    │   │   ├── __init__.py
+    │   │   ├── constants.py
+    │   │   ├── data_loading.py
+    │   │   ├── data_validation.py
+    │   │   ├── continuous_models.py
+    │   │   ├── ddm_model.py
+    │   │   ├── likelihood_scoring.py
+    │   │   ├── orchestration.py
+    │   │   └── cli.py
     │   └── elias_notebook.ipynb
     ├── evan/                         # Glaze model primitives used by model wrappers
     │   └── glaze.py
@@ -60,7 +69,7 @@ The current shared data flow is:
 
 1. Source participant CSVs live in `data/elias.csv`, `data/evan.csv`, and `data/maik.csv`.
 2. `src/common_helpers/combine_participant_data_csvs.py` can merge them into `data/participants.csv` with assigned participant IDs (`P01`, `P02`, `P03`).
-3. `src/common_helpers/preprocessing.py` provides shared load/preprocessing functions used by `src/elias/elias_ddm.py` and the Elias notebook.
+3. `src/common_helpers/preprocessing.py` provides shared load/preprocessing functions used by `src/elias/elias_models/*` and the Elias notebook.
 
 Current merged dataset expectation:
 - `P01` (`elias.csv`): 160 rows
@@ -76,6 +85,12 @@ Create and activate a conda environment, then install dependencies:
 conda create -n glaze python=3.11 -y
 conda activate glaze
 pip install -r requirements.txt
+```
+
+CLI smoke-test entrypoint:
+
+```bash
+PYTHONPATH=src:src/elias python -m elias_models.cli --participant-id P01
 ```
 
 ## Notebook Output Stripping (`nbstripout`)
