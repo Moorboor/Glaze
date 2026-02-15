@@ -102,6 +102,45 @@ PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run \
 
 This single command runs Step 3, Step 4, and Step 5.
 
+How this command works:
+
+- `PYTHONPATH=src:src/elias` temporarily adds `src/` and `src/elias/` to Python's import path for this command.
+  - `src/` is needed for shared modules like `common_helpers`.
+  - `src/elias/` is needed so `elias_models` can be imported as a top-level package.
+- `python -m elias_models.cli` runs the module `elias_models/cli.py` as a program.
+  - `-m` means "run a module by import name" (instead of running a file path directly).
+- `pipeline-run` selects the combined CLI subcommand.
+- `--run-id` names the run folder and links Step 3/4/5 outputs.
+- `--csv-path` points to the input dataset.
+- `--output-root` is the root folder where run artifacts are persisted.
+
+Run it more easily:
+
+1. One-line version (same command without line breaks):
+
+```bash
+PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run --run-id run_2026_02_15_full --csv-path data/participants.csv --output-root data/elias
+```
+
+2. Export `PYTHONPATH` once per shell session:
+
+```bash
+export PYTHONPATH=src:src/elias
+python -m elias_models.cli pipeline-run --run-id run_2026_02_15_full --csv-path data/participants.csv --output-root data/elias
+```
+
+3. Optional shell alias in `~/.bashrc`:
+
+```bash
+alias glaze-pipeline='PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run'
+```
+
+Then run:
+
+```bash
+glaze-pipeline --run-id run_2026_02_15_full --csv-path data/participants.csv --output-root data/elias
+```
+
 Quick smoke run (reduced simulation counts):
 
 ```bash
