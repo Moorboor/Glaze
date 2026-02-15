@@ -13,6 +13,7 @@ from .parameter_space import (
     theta_to_named_params,
     theta_to_scoring_model_params,
 )
+from .reporting import run_step34_pipeline
 from .surrogate_recovery import (
     build_step3_pipeline_config,
     compute_step3_recovery_from_fit_results,
@@ -25,6 +26,13 @@ from .surrogate_recovery import (
     sample_pseudo_true_thetas,
     simulate_surrogate_dataset,
 )
+from .train_test_eval import (
+    build_step4_pipeline_config,
+    list_step4_runs,
+    load_step4_run,
+    run_step4_pipeline,
+)
+from .winner_rules import apply_step4_winner_rules
 
 __all__ = [
     "load_participant_data",
@@ -45,6 +53,12 @@ __all__ = [
     "simulate_surrogate_dataset",
     "fit_models_on_surrogate",
     "run_surrogate_recovery",
+    "build_step4_pipeline_config",
+    "run_step4_pipeline",
+    "load_step4_run",
+    "list_step4_runs",
+    "apply_step4_winner_rules",
+    "run_step34_pipeline",
     "get_parameter_spec",
     "eta_to_theta",
     "theta_to_eta",

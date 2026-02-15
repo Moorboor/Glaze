@@ -5,11 +5,18 @@ import argparse
 import pandas as pd
 
 from .data_loading import load_participant_data, preprocess_loaded_participant_data
+from .reporting import run_step34_pipeline
 from .surrogate_recovery import (
     build_step3_pipeline_config,
     list_step3_runs,
     load_step3_run,
     run_step3_pipeline,
+)
+from .train_test_eval import (
+    build_step4_pipeline_config,
+    list_step4_runs,
+    load_step4_run,
+    run_step4_pipeline,
 )
 
 
@@ -20,10 +27,21 @@ def _parse_candidate_models(raw_value: str) -> tuple[str, ...]:
     return models
 
 
-def _load_preprocessed_dataset(csv_path: str, hazard_col: str) -> pd.DataFrame:
+def _parse_participant_ids(raw_value: str | None) -> list[str] | None:
+    if raw_value is None:
+        return None
+    ids = [part.strip() for part in str(raw_value).split(",") if part.strip()]
+    return ids if ids else None
+
+
+def _load_preprocessed_dataset(
+    csv_path: str,
+    hazard_col: str,
+    participant_ids: list[str] | None = None,
+) -> pd.DataFrame:
     loaded_df = load_participant_data(
         csv_path=csv_path,
-        participant_ids=None,
+        participant_ids=participant_ids,
         hazard_col=hazard_col,
         reset_on=("participant", "block"),
     )
@@ -72,6 +90,106 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="List persisted Step 3 runs.",
     )
     list_parser.add_argument("--output-root", type=str, default="data/elias")
+
+    participant_run_parser = subparsers.add_parser(
+        "participant-run",
+        help="Run Step 4 participant train/test pipeline and persist outputs.",
+    )
+    participant_run_parser.add_argument("--run-id", type=str, required=True)
+    participant_run_parser.add_argument("--output-root", type=str, default="data/elias")
+    participant_run_parser.add_argument("--csv-path", type=str, default="data/participants.csv")
+    participant_run_parser.add_argument("--hazard-col", type=str, default="subjective_h_snapshot")
+    participant_run_parser.add_argument(
+        "--participant-ids",
+        type=str,
+        default=None,
+        help="Optional comma-separated participant IDs.",
+    )
+    participant_run_parser.add_argument(
+        "--candidate-models",
+        type=str,
+        default="cont_threshold,cont_asymptote,ddm_dnm",
+        help="Comma-separated candidate model names.",
+    )
+    participant_run_parser.add_argument("--fit-n-starts", type=int, default=4)
+    participant_run_parser.add_argument("--fit-n-iterations", type=int, default=8)
+    participant_run_parser.add_argument("--fit-n-sims-per-trial", type=int, default=150)
+    participant_run_parser.add_argument("--eval-n-sims-per-trial", type=int, default=150)
+    participant_run_parser.add_argument("--rt-bin-width-ms", type=float, default=20.0)
+    participant_run_parser.add_argument("--rt-max-ms", type=float, default=5000.0)
+    participant_run_parser.add_argument("--eps", type=float, default=1e-12)
+    participant_run_parser.add_argument("--dt-ms", type=float, default=1.0)
+    participant_run_parser.add_argument("--max-duration-ms", type=float, default=5000.0)
+    participant_run_parser.add_argument(
+        "--winner-primary-score-column",
+        type=str,
+        default="joint_score",
+        choices=["joint_score", "choice_only_score", "rt_only_cond_score", "bic_score"],
+    )
+    participant_run_parser.add_argument("--winner-tie-tolerance", type=float, default=1e-9)
+    participant_run_parser.add_argument("--seed", type=int, default=0)
+    participant_run_parser.add_argument("--overwrite", action="store_true")
+
+    participant_show_parser = subparsers.add_parser(
+        "participant-show",
+        help="Show summary for one persisted Step 4 run.",
+    )
+    participant_show_parser.add_argument("--run-id", type=str, required=True)
+    participant_show_parser.add_argument("--output-root", type=str, default="data/elias")
+
+    participant_list_parser = subparsers.add_parser(
+        "participant-list",
+        help="List persisted Step 4 runs.",
+    )
+    participant_list_parser.add_argument("--output-root", type=str, default="data/elias")
+
+    pipeline_parser = subparsers.add_parser(
+        "pipeline-run",
+        help="Run combined Step 3 and Step 4 pipelines with linked manifests.",
+    )
+    pipeline_parser.add_argument("--run-id", type=str, required=True)
+    pipeline_parser.add_argument("--output-root", type=str, default="data/elias")
+    pipeline_parser.add_argument("--csv-path", type=str, default="data/participants.csv")
+    pipeline_parser.add_argument("--hazard-col", type=str, default="subjective_h_snapshot")
+    pipeline_parser.add_argument(
+        "--participant-ids",
+        type=str,
+        default=None,
+        help="Optional comma-separated participant IDs.",
+    )
+    pipeline_parser.add_argument(
+        "--candidate-models",
+        type=str,
+        default="cont_threshold,cont_asymptote,ddm_dnm",
+        help="Comma-separated candidate model names used by both steps.",
+    )
+    pipeline_parser.add_argument("--seed", type=int, default=0)
+    pipeline_parser.add_argument("--dt-ms", type=float, default=1.0)
+    pipeline_parser.add_argument("--max-duration-ms", type=float, default=5000.0)
+    pipeline_parser.add_argument("--overwrite", action="store_true")
+
+    pipeline_parser.add_argument("--step3-n-surrogates-per-model", type=int, default=20)
+    pipeline_parser.add_argument("--step3-surrogate-n-draws-per-trial", type=int, default=128)
+    pipeline_parser.add_argument("--step3-fit-n-starts", type=int, default=4)
+    pipeline_parser.add_argument("--step3-fit-n-iterations", type=int, default=8)
+    pipeline_parser.add_argument("--step3-fit-n-sims-per-trial", type=int, default=150)
+    pipeline_parser.add_argument("--step3-soft-gate-joint-diag-min", type=float, default=0.60)
+    pipeline_parser.add_argument("--step3-soft-gate-param-median-r-min", type=float, default=0.30)
+
+    pipeline_parser.add_argument("--step4-fit-n-starts", type=int, default=4)
+    pipeline_parser.add_argument("--step4-fit-n-iterations", type=int, default=8)
+    pipeline_parser.add_argument("--step4-fit-n-sims-per-trial", type=int, default=150)
+    pipeline_parser.add_argument("--step4-eval-n-sims-per-trial", type=int, default=150)
+    pipeline_parser.add_argument("--step4-rt-bin-width-ms", type=float, default=20.0)
+    pipeline_parser.add_argument("--step4-rt-max-ms", type=float, default=5000.0)
+    pipeline_parser.add_argument("--step4-eps", type=float, default=1e-12)
+    pipeline_parser.add_argument(
+        "--step4-winner-primary-score-column",
+        type=str,
+        default="joint_score",
+        choices=["joint_score", "choice_only_score", "rt_only_cond_score", "bic_score"],
+    )
+    pipeline_parser.add_argument("--step4-winner-tie-tolerance", type=float, default=1e-9)
 
     return parser
 
@@ -145,6 +263,140 @@ def _cmd_surrogate_list(args: argparse.Namespace) -> None:
     print(runs.to_string(index=False))
 
 
+def _cmd_participant_run(args: argparse.Namespace) -> None:
+    candidate_models = _parse_candidate_models(args.candidate_models)
+    participant_ids = _parse_participant_ids(args.participant_ids)
+    config = build_step4_pipeline_config(
+        candidate_models=candidate_models,
+        fit_n_starts=int(args.fit_n_starts),
+        fit_n_iterations=int(args.fit_n_iterations),
+        fit_n_sims_per_trial=int(args.fit_n_sims_per_trial),
+        eval_n_sims_per_trial=int(args.eval_n_sims_per_trial),
+        rt_bin_width_ms=float(args.rt_bin_width_ms),
+        rt_max_ms=float(args.rt_max_ms),
+        eps=float(args.eps),
+        dt_ms=float(args.dt_ms),
+        max_duration_ms=float(args.max_duration_ms),
+        random_seed=int(args.seed),
+        winner_primary_score_column=str(args.winner_primary_score_column),
+        winner_tie_tolerance=float(args.winner_tie_tolerance),
+    )
+
+    df_all = _load_preprocessed_dataset(
+        args.csv_path,
+        args.hazard_col,
+        participant_ids=participant_ids,
+    )
+    run_output = run_step4_pipeline(
+        df_all,
+        run_id=str(args.run_id),
+        output_root=str(args.output_root),
+        config=config,
+        overwrite=bool(args.overwrite),
+    )
+
+    manifest = run_output["manifest"]
+    print(f"Run finished: {manifest['run_id']}")
+    print(f"Run directory: {run_output['run_dir']}")
+    print(f"Participants: {manifest['n_participants']} | Fit rows: {manifest['n_fit_rows']}")
+    print(f"Group winner model: {manifest['group_winner_model_name']}")
+
+
+def _cmd_participant_show(args: argparse.Namespace) -> None:
+    loaded = load_step4_run(run_id=str(args.run_id), output_root=str(args.output_root))
+    manifest = loaded["manifest"]
+    tables = loaded["tables"]
+
+    print(f"Run: {manifest.get('run_id')}")
+    print(f"Created: {manifest.get('created_at_utc')}")
+    print(f"Status: {manifest.get('status')}")
+    print(f"Run directory: {loaded['run_dir']}")
+
+    if "group_winner_summary" in tables and not tables["group_winner_summary"].empty:
+        print("\nGroup winner summary:")
+        print(tables["group_winner_summary"].to_string(index=False))
+
+    if "participant_winner_table" in tables and not tables["participant_winner_table"].empty:
+        print("\nParticipant winners:")
+        print(tables["participant_winner_table"].to_string(index=False))
+
+    if "participant_model_scores_test" in tables and not tables["participant_model_scores_test"].empty:
+        summary = (
+            tables["participant_model_scores_test"]
+            .groupby(["participant_id", "candidate_model_name"], as_index=False)
+            .agg(
+                joint_score=("joint_score", "first"),
+                bic_score=("bic_score", "first"),
+            )
+            .sort_values(["participant_id", "joint_score", "candidate_model_name"])
+            .reset_index(drop=True)
+        )
+        print("\nParticipant-model TEST scores:")
+        print(summary.to_string(index=False))
+
+
+def _cmd_participant_list(args: argparse.Namespace) -> None:
+    runs = list_step4_runs(output_root=str(args.output_root))
+    if runs.empty:
+        print("No Step 4 runs found.")
+        return
+    print(runs.to_string(index=False))
+
+
+def _cmd_pipeline_run(args: argparse.Namespace) -> None:
+    candidate_models = _parse_candidate_models(args.candidate_models)
+    participant_ids = _parse_participant_ids(args.participant_ids)
+
+    step3_config = build_step3_pipeline_config(
+        candidate_models=candidate_models,
+        n_surrogates_per_model=int(args.step3_n_surrogates_per_model),
+        surrogate_n_draws_per_trial=int(args.step3_surrogate_n_draws_per_trial),
+        fit_n_starts=int(args.step3_fit_n_starts),
+        fit_n_iterations=int(args.step3_fit_n_iterations),
+        fit_n_sims_per_trial=int(args.step3_fit_n_sims_per_trial),
+        dt_ms=float(args.dt_ms),
+        max_duration_ms=float(args.max_duration_ms),
+        random_seed=int(args.seed),
+        soft_gate_joint_diag_min=float(args.step3_soft_gate_joint_diag_min),
+        soft_gate_param_median_r_min=float(args.step3_soft_gate_param_median_r_min),
+    )
+    step4_config = build_step4_pipeline_config(
+        candidate_models=candidate_models,
+        fit_n_starts=int(args.step4_fit_n_starts),
+        fit_n_iterations=int(args.step4_fit_n_iterations),
+        fit_n_sims_per_trial=int(args.step4_fit_n_sims_per_trial),
+        eval_n_sims_per_trial=int(args.step4_eval_n_sims_per_trial),
+        rt_bin_width_ms=float(args.step4_rt_bin_width_ms),
+        rt_max_ms=float(args.step4_rt_max_ms),
+        eps=float(args.step4_eps),
+        dt_ms=float(args.dt_ms),
+        max_duration_ms=float(args.max_duration_ms),
+        random_seed=int(args.seed),
+        winner_primary_score_column=str(args.step4_winner_primary_score_column),
+        winner_tie_tolerance=float(args.step4_winner_tie_tolerance),
+    )
+
+    df_all = _load_preprocessed_dataset(
+        args.csv_path,
+        args.hazard_col,
+        participant_ids=participant_ids,
+    )
+    pipeline_output = run_step34_pipeline(
+        df_all,
+        run_id=str(args.run_id),
+        output_root=str(args.output_root),
+        step3_config=step3_config,
+        step4_config=step4_config,
+        overwrite=bool(args.overwrite),
+    )
+
+    print(f"Master run finished: {pipeline_output['run_id']}")
+    print(f"Master manifest path: {pipeline_output['manifest_path']}")
+    print(f"Linked Step 3 run: {pipeline_output['step3_run_id']}")
+    print(f"Linked Step 4 run: {pipeline_output['step4_run_id']}")
+    print(f"Step 5 status: {pipeline_output['manifest']['step5_status']}")
+
+
 def main() -> None:
     """Run CLI entrypoint for Elias model pipelines."""
     args = _build_arg_parser().parse_args()
@@ -157,6 +409,18 @@ def main() -> None:
         return
     if args.command == "surrogate-list":
         _cmd_surrogate_list(args)
+        return
+    if args.command == "participant-run":
+        _cmd_participant_run(args)
+        return
+    if args.command == "participant-show":
+        _cmd_participant_show(args)
+        return
+    if args.command == "participant-list":
+        _cmd_participant_list(args)
+        return
+    if args.command == "pipeline-run":
+        _cmd_pipeline_run(args)
         return
 
     raise ValueError(f"Unsupported command: {args.command}")
