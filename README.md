@@ -114,32 +114,6 @@ How this command works:
 - `--csv-path` points to the input dataset.
 - `--output-root` is the root folder where run artifacts are persisted.
 
-Run it more easily:
-
-1. One-line version (same command without line breaks):
-
-```bash
-PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run --run-id run_2026_02_15_full --csv-path data/participants.csv --output-root data/elias
-```
-
-2. Export `PYTHONPATH` once per shell session:
-
-```bash
-export PYTHONPATH=src:src/elias
-python -m elias_models.cli pipeline-run --run-id run_2026_02_15_full --csv-path data/participants.csv --output-root data/elias
-```
-
-3. Optional shell alias in `~/.bashrc`:
-
-```bash
-alias glaze-pipeline='PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run'
-```
-
-Then run:
-
-```bash
-glaze-pipeline --run-id run_2026_02_15_full --csv-path data/participants.csv --output-root data/elias
-```
 
 Quick smoke run (reduced simulation counts):
 
