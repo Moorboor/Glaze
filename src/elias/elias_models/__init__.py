@@ -13,7 +13,7 @@ from .parameter_space import (
     theta_to_named_params,
     theta_to_scoring_model_params,
 )
-from .reporting import run_step34_pipeline
+from .reporting import build_step5_pipeline_config, run_step34_pipeline, run_step345_pipeline
 from .surrogate_recovery import (
     build_step3_pipeline_config,
     compute_step3_recovery_from_fit_results,
@@ -58,7 +58,9 @@ __all__ = [
     "load_step4_run",
     "list_step4_runs",
     "apply_step4_winner_rules",
+    "build_step5_pipeline_config",
     "run_step34_pipeline",
+    "run_step345_pipeline",
     "get_parameter_spec",
     "eta_to_theta",
     "theta_to_eta",

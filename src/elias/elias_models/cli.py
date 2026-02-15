@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
 import pandas as pd
 
 from .data_loading import load_participant_data, preprocess_loaded_participant_data
-from .reporting import run_step34_pipeline
+from .reporting import (
+    Step5PipelineError,
+    build_step5_pipeline_config,
+    run_step345_pipeline,
+)
 from .surrogate_recovery import (
     build_step3_pipeline_config,
     list_step3_runs,
@@ -145,7 +150,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
     pipeline_parser = subparsers.add_parser(
         "pipeline-run",
-        help="Run combined Step 3 and Step 4 pipelines with linked manifests.",
+        help="Run combined Step 3, Step 4, and Step 5 pipelines with linked manifests.",
     )
     pipeline_parser.add_argument("--run-id", type=str, required=True)
     pipeline_parser.add_argument("--output-root", type=str, default="data/elias")
@@ -190,6 +195,18 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         choices=["joint_score", "choice_only_score", "rt_only_cond_score", "bic_score"],
     )
     pipeline_parser.add_argument("--step4-winner-tie-tolerance", type=float, default=1e-9)
+    pipeline_parser.add_argument("--step5-ppc-n-sims-per-trial", type=int, default=200)
+    pipeline_parser.add_argument("--step5-ddm-n-samples-per-trial", type=int, default=200)
+    pipeline_parser.add_argument("--step5-rt-bin-width-ms", type=float, default=20.0)
+    pipeline_parser.add_argument("--step5-rt-max-ms", type=float, default=5000.0)
+    pipeline_parser.add_argument("--step5-eps", type=float, default=1e-12)
+    pipeline_parser.add_argument(
+        "--step5-seed",
+        type=int,
+        default=None,
+        help="Optional override seed for Step 5. Defaults to --seed when omitted.",
+    )
+    pipeline_parser.add_argument("--step5-latent-cont-noise-std", type=float, default=0.0)
 
     return parser
 
@@ -375,26 +392,46 @@ def _cmd_pipeline_run(args: argparse.Namespace) -> None:
         winner_primary_score_column=str(args.step4_winner_primary_score_column),
         winner_tie_tolerance=float(args.step4_winner_tie_tolerance),
     )
+    step5_seed = int(args.step5_seed) if args.step5_seed is not None else int(args.seed)
+    step5_config = build_step5_pipeline_config(
+        ppc_n_sims_per_trial=int(args.step5_ppc_n_sims_per_trial),
+        ddm_n_samples_per_trial=int(args.step5_ddm_n_samples_per_trial),
+        rt_bin_width_ms=float(args.step5_rt_bin_width_ms),
+        rt_max_ms=float(args.step5_rt_max_ms),
+        eps=float(args.step5_eps),
+        random_seed=int(step5_seed),
+        latent_cont_noise_std=float(args.step5_latent_cont_noise_std),
+    )
 
     df_all = _load_preprocessed_dataset(
         args.csv_path,
         args.hazard_col,
         participant_ids=participant_ids,
     )
-    pipeline_output = run_step34_pipeline(
-        df_all,
-        run_id=str(args.run_id),
-        output_root=str(args.output_root),
-        step3_config=step3_config,
-        step4_config=step4_config,
-        overwrite=bool(args.overwrite),
-    )
+    try:
+        pipeline_output = run_step345_pipeline(
+            df_all,
+            run_id=str(args.run_id),
+            output_root=str(args.output_root),
+            step3_config=step3_config,
+            step4_config=step4_config,
+            step5_config=step5_config,
+            overwrite=bool(args.overwrite),
+        )
+    except Step5PipelineError as exc:
+        print(f"Master run failed at Step 5: {args.run_id}", file=sys.stderr)
+        if exc.manifest_path is not None:
+            print(f"Master manifest path: {exc.manifest_path}", file=sys.stderr)
+        if exc.error_log_path is not None:
+            print(f"Step 5 error log path: {exc.error_log_path}", file=sys.stderr)
+        raise
 
     print(f"Master run finished: {pipeline_output['run_id']}")
     print(f"Master manifest path: {pipeline_output['manifest_path']}")
     print(f"Linked Step 3 run: {pipeline_output['step3_run_id']}")
     print(f"Linked Step 4 run: {pipeline_output['step4_run_id']}")
     print(f"Step 5 status: {pipeline_output['manifest']['step5_status']}")
+    print(f"Step 5 report path: {pipeline_output['step5_report_path']}")
 
 
 def main() -> None:

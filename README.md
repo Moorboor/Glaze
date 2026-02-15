@@ -87,11 +87,59 @@ conda activate glaze
 pip install -r requirements.txt
 ```
 
-CLI smoke-test entrypoint:
+## CLI Run (Steps 3,4,5)
+
+The combined CLI command is `pipeline-run`. It now runs Step 3, Step 4, and Step 5 automatically.
+
+Full run (default settings):
 
 ```bash
-PYTHONPATH=src:src/elias python -m elias_models.cli --participant-id P01
+PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run \
+  --run-id run_2026_02_15_full \
+  --csv-path data/participants.csv \
+  --output-root data/elias
 ```
+
+Quick smoke run (reduced simulation counts):
+
+```bash
+PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run \
+  --run-id run_2026_02_15_smoke \
+  --csv-path data/participants.csv \
+  --output-root data/elias \
+  --step3-n-surrogates-per-model 1 \
+  --step3-surrogate-n-draws-per-trial 16 \
+  --step3-fit-n-starts 1 \
+  --step3-fit-n-iterations 0 \
+  --step3-fit-n-sims-per-trial 20 \
+  --step4-fit-n-starts 1 \
+  --step4-fit-n-iterations 0 \
+  --step4-fit-n-sims-per-trial 20 \
+  --step4-eval-n-sims-per-trial 20 \
+  --step5-ppc-n-sims-per-trial 20 \
+  --step5-ddm-n-samples-per-trial 30 \
+  --overwrite
+```
+
+tmux-friendly long run pattern:
+
+```bash
+tmux new -s glaze_run
+PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run \
+  --run-id run_2026_02_15_tmux \
+  --csv-path data/participants.csv \
+  --output-root data/elias
+```
+
+Output retrieval locations:
+
+- Step 3 run: `data/elias/surrogate_recovery/runs/<run_id>__step3/`
+- Step 4 run: `data/elias/participant_fit/runs/<run_id>__step4/`
+- Step 5 + master reporting:
+  - `data/elias/reporting/runs/<run_id>/manifest.json`
+  - `data/elias/reporting/runs/<run_id>/tables/`
+  - `data/elias/reporting/runs/<run_id>/reports/step5_report.md`
+  - `data/elias/reporting/runs/<run_id>/logs/step5_error.txt` (only on Step 5 failure)
 
 ## Notebook Output Stripping (`nbstripout`)
 
