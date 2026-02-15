@@ -87,11 +87,11 @@ conda activate glaze
 pip install -r requirements.txt
 ```
 
-## CLI Run (Steps 3,4,5)
+## Working with `src/elias`
 
-The combined CLI command is `pipeline-run`. It now runs Step 3, Step 4, and Step 5 automatically.
+`src/elias` contains the modular modeling package and pipeline CLI.
 
-Full run (default settings):
+Main entrypoint:
 
 ```bash
 PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run \
@@ -99,6 +99,8 @@ PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run \
   --csv-path data/participants.csv \
   --output-root data/elias
 ```
+
+This single command runs Step 3, Step 4, and Step 5.
 
 Quick smoke run (reduced simulation counts):
 
@@ -131,15 +133,36 @@ PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run \
   --output-root data/elias
 ```
 
-Output retrieval locations:
+Where outputs are saved:
 
-- Step 3 run: `data/elias/surrogate_recovery/runs/<run_id>__step3/`
-- Step 4 run: `data/elias/participant_fit/runs/<run_id>__step4/`
-- Step 5 + master reporting:
+- Step 3: `data/elias/surrogate_recovery/runs/<run_id>__step3/`
+- Step 4: `data/elias/participant_fit/runs/<run_id>__step4/`
+- Step 5 + reporting:
   - `data/elias/reporting/runs/<run_id>/manifest.json`
   - `data/elias/reporting/runs/<run_id>/tables/`
   - `data/elias/reporting/runs/<run_id>/reports/step5_report.md`
-  - `data/elias/reporting/runs/<run_id>/logs/step5_error.txt` (only on Step 5 failure)
+  - `data/elias/reporting/runs/<run_id>/logs/step5_error.txt` (only if Step 5 fails)
+
+## Working with `src/evan`
+
+`src/evan` contains the lower-level Glaze primitives used by `src/elias`:
+
+- `psi_function(...)`
+- `simulate_trial(...)`
+
+Standalone script mode (for interactive simulation + plots):
+
+```bash
+python src/evan/glaze.py
+```
+
+Optional block-specific run:
+
+```bash
+python src/evan/glaze.py 2
+```
+
+These commands load `data/participants.csv` by default and open matplotlib plots for inspection.
 
 ## Notebook Output Stripping (`nbstripout`)
 
