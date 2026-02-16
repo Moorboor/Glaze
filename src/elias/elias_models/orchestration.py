@@ -1,3 +1,7 @@
+# Lightweight orchestration helper to run all candidate models for one participant.
+# Main function: run_all_models_for_participant.
+# Primarily used for quick diagnostics outside full Step 3/4 pipelines.
+
 from __future__ import annotations
 
 import pandas as pd
@@ -19,6 +23,8 @@ def run_all_models_for_participant(
     _validate_required_columns(df, ["participant_id"], context="orchestration")
 
     participant_id_str = str(participant_id)
+    # Restrict to one participant so each candidate model is run on the exact
+    # same input rows for fair side-by-side diagnostics.
     subset = df[df["participant_id"].astype(str) == participant_id_str].copy()
     if subset.empty:
         available = sorted(df["participant_id"].astype(str).unique().tolist())
@@ -35,6 +41,7 @@ def run_all_models_for_participant(
         random_seed=random_seed,
     )
 
+    # Stable model-key contract used by notebooks and analysis helpers.
     return {
         "cont_threshold": out_a,
         "cont_asymptote": out_b,

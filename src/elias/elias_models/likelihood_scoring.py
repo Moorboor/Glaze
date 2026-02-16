@@ -1,3 +1,7 @@
+# Simulation-based likelihood scorer shared by Step 3/4/5.
+# Main function: score_model_simulation_likelihood.
+# Computes joint negative log-likelihood from choice likelihood and conditional RT density.
+
 from __future__ import annotations
 
 import sys
@@ -45,6 +49,8 @@ def _estimate_rt_density_at_observed_value(
     eps: float,
 ) -> float:
     """Estimate conditional RT density at the observed RT from histogram bins."""
+    # Guard rails: if observation is invalid or out of modeled support, return
+    # epsilon so score stays finite and comparable across candidates.
     if not np.isfinite(observed_rt_ms):
         return float(eps)
     if observed_rt_ms < float(rt_bin_edges[0]) or observed_rt_ms > float(rt_bin_edges[-1]):
@@ -56,6 +62,7 @@ def _estimate_rt_density_at_observed_value(
         return float(eps)
 
     counts, _ = np.histogram(samples, bins=rt_bin_edges)
+    # Add epsilon pseudo-counts to avoid zero-density bins.
     smoothed_counts = counts.astype(float) + float(eps)
 
     bin_width_ms = float(rt_bin_edges[1] - rt_bin_edges[0])
@@ -77,6 +84,8 @@ def _simulate_continuous_trials_for_likelihood(
     decision_time_ms: float,
     noise_gain: float,
     threshold_mode: str,
+    block_threshold_map: dict[int, float] | None,
+    use_block_sidecar_params: bool,
     random_seed: int,
 ) -> tuple[list[np.ndarray], list[np.ndarray]]:
     """Generate per-trial Monte Carlo decision/RT samples for continuous models."""
@@ -87,7 +96,20 @@ def _simulate_continuous_trials_for_likelihood(
     if max_duration_ms <= 0:
         raise ValueError("max_duration_ms must be > 0")
 
-    thresholded_df = _attach_thresholds(model_df, threshold_mode=threshold_mode)
+    # Threshold attachment can consume block sidecar values when enabled. This
+    # is the key integration point that makes A/B block parameters operational.
+    thresholded_df = _attach_thresholds(
+        model_df,
+        threshold_mode=threshold_mode,
+        block_threshold_map=block_threshold_map,
+        use_block_sidecar_params=bool(use_block_sidecar_params),
+    )
+    # For Model B, `stop_on_sat=True` would overwrite supplied thresholds inside
+    # Evan's simulator. Disable that overwrite when block sidecar thresholds are
+    # explicitly enabled so fitted block parameters are actually used.
+    effective_stop_on_sat = bool(stop_on_sat)
+    if bool(use_block_sidecar_params) and isinstance(block_threshold_map, dict) and block_threshold_map:
+        effective_stop_on_sat = False
     dt_sec = float(dt_ms) / 1000.0
 
     decisions_by_trial: list[np.ndarray] = []
@@ -97,6 +119,7 @@ def _simulate_continuous_trials_for_likelihood(
         for row in thresholded_df.itertuples(index=False):
             decisions = np.zeros(n_sims_per_trial, dtype=int)
             rts_ms = np.zeros(n_sims_per_trial, dtype=float)
+            # Simulate a response distribution for the single observed trial.
             for sample_idx in range(n_sims_per_trial):
                 sim_result = simulate_trial(
                     prev_belief_L=float(row.prev_observed_belief_L),
@@ -108,7 +131,7 @@ def _simulate_continuous_trials_for_likelihood(
                     noise_std=float(noise_std),
                     decision_time_ms=float(decision_time_ms),
                     noise_gain=float(noise_gain),
-                    stop_on_sat=bool(stop_on_sat),
+                    stop_on_sat=bool(effective_stop_on_sat),
                 )
                 decisions[sample_idx] = _coerce_simulated_decision(sim_result["decision"])
                 rts_ms[sample_idx] = float(sim_result["reaction_time_ms"])
@@ -150,6 +173,8 @@ def _simulate_ddm_trials_for_likelihood(
     rts_by_trial: list[np.ndarray] = []
 
     for row in model_df.itertuples(index=False):
+        # Deterministic trial-specific transforms from observed inputs to
+        # DDM controls (start bias z_t and drift v_t).
         psi_t = float(psi_function(float(row.prev_observed_belief_L), float(row.H)))
         z_t = _sigmoid(float(start_k) * psi_t)
         z_t = float(np.clip(z_t, EPSILON, 1.0 - EPSILON))
@@ -201,9 +226,18 @@ def score_model_simulation_likelihood(
 
     params = {} if model_params is None else dict(model_params)
     model_df = _prepare_model_input(df)
+    # Normalize choice coding once so all models are scored against {-1, +1}
+    # decisions even if source data used {0,1}.
     model_df["choice"] = _normalize_choice_values_to_pm1(model_df["choice"].to_numpy())
 
     if model_name_str in ("cont_threshold", "cont_asymptote"):
+        use_block_sidecar_params = bool(params.get("use_block_sidecar_params", False))
+        block_threshold_map = (
+            params.get("threshold_by_block_sidecar", {})
+            if model_name_str == "cont_threshold"
+            else params.get("asymptote_by_block_sidecar", {})
+        )
+        # Continuous models: sample from Glaze-style process simulator.
         simulated_decisions, simulated_rts_ms = _simulate_continuous_trials_for_likelihood(
             model_df=model_df,
             stop_on_sat=(model_name_str == "cont_asymptote"),
@@ -216,9 +250,14 @@ def score_model_simulation_likelihood(
             threshold_mode=str(
                 params.get("threshold_mode", "participant_block_mean_abs_belief")
             ),
+            block_threshold_map=(
+                dict(block_threshold_map) if isinstance(block_threshold_map, dict) else None
+            ),
+            use_block_sidecar_params=bool(use_block_sidecar_params),
             random_seed=int(random_seed),
         )
     else:
+        # DDM model: sample from boundary-crossing simulator.
         simulated_decisions, simulated_rts_ms = _simulate_ddm_trials_for_likelihood(
             model_df=model_df,
             n_sims_per_trial=int(n_sims_per_trial),
@@ -246,9 +285,11 @@ def score_model_simulation_likelihood(
         observed_choice = int(row.choice)
         observed_rt_ms = float(row.reaction_time_ms)
 
+        # Choice term: empirical Monte Carlo probability of observed choice.
         p_choice = float(np.mean(sampled_decisions == observed_choice))
         p_choice = float(max(p_choice, float(eps)))
 
+        # RT term is conditioned on observed choice, matching the scoring design.
         matching_rts_ms = sampled_rts_ms[sampled_decisions == observed_choice]
         if matching_rts_ms.size == 0:
             p_rt_given_choice = float(eps)
@@ -261,6 +302,7 @@ def score_model_simulation_likelihood(
             )
         p_rt_given_choice = float(max(p_rt_given_choice, float(eps)))
 
+        # Joint trial score is additive in NLL space.
         nll_choice = float(-np.log(p_choice))
         nll_rt_cond = float(-np.log(p_rt_given_choice))
         nll_joint = float(nll_choice + nll_rt_cond)
@@ -285,6 +327,8 @@ def score_model_simulation_likelihood(
         )
 
     trial_scores = pd.DataFrame(trial_rows)
+    # Aggregate scores are simple sums so they remain comparable across
+    # candidates evaluated on the same trial set.
     aggregate_scores = {
         "model_name": model_name_str,
         "joint_score": float(trial_scores["nll_joint"].sum()),

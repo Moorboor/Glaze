@@ -1,3 +1,7 @@
+# Parameter-space definitions and transforms for Models A/B/C.
+# Main functions: get_parameter_spec, eta_to_theta, theta_to_eta,
+# theta_to_named_params, theta_to_scoring_model_params.
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -10,6 +14,8 @@ from .constants import SUPPORTED_MODEL_NAMES
 
 _TRANSFORM_EPS = 1e-12
 
+# Ordered parameter definitions are the single source of truth for:
+# 1) optimizer dimensionality, 2) bounds, and 3) name mapping in reports.
 _PARAMETER_SPECS: dict[str, list[dict[str, object]]] = {
     "cont_threshold": [
         {"name": "thr_b1", "lower": 0.10, "upper": 15.00},
@@ -101,6 +107,7 @@ def eta_to_theta(model_name: str, eta: np.ndarray) -> np.ndarray:
             f"eta length mismatch for model '{model_name_str}': "
             f"expected {lower.size}, got {eta_vector.size}."
         )
+    # Optimize in unconstrained eta-space, then map to bounded theta-space.
     p = _sigmoid_stable(eta_vector)
     theta = lower + (upper - lower) * p
     return np.clip(theta, lower, upper)
@@ -123,6 +130,7 @@ def theta_to_eta(model_name: str, theta: np.ndarray) -> np.ndarray:
             f"theta contains out-of-bounds values at indices {invalid_indices} "
             f"for model '{model_name_str}'."
         )
+    # Inverse map for logging/recovery and warm-start workflows.
     p = (theta_vector - lower) / (upper - lower)
     return _logit_stable(p)
 
@@ -165,6 +173,8 @@ def theta_to_scoring_model_params(
 
     if model_name_str == "cont_threshold":
         block_param_order = tuple(f"thr_b{i}" for i in range(1, 5))
+        # Keep block-specific threshold estimates as explicit metadata for
+        # reporting/integration, even though current scorer does not consume them.
         threshold_by_block = {
             int(block_id): float(named[param_name])
             for block_id, param_name in zip(
@@ -180,11 +190,13 @@ def theta_to_scoring_model_params(
             "threshold_by_block_sidecar": threshold_by_block,
             "block_ids_sidecar": list(normalized_blocks),
             "block_param_order_sidecar": list(block_param_order),
-            "block_params_used_in_scoring": False,
+            "use_block_sidecar_params": True,
+            "block_params_used_in_scoring": True,
         }
 
     if model_name_str == "cont_asymptote":
         block_param_order = tuple(f"asy_b{i}" for i in range(1, 5))
+        # Same sidecar pattern for asymptote model.
         asymptote_by_block = {
             int(block_id): float(named[param_name])
             for block_id, param_name in zip(
@@ -200,9 +212,12 @@ def theta_to_scoring_model_params(
             "asymptote_by_block_sidecar": asymptote_by_block,
             "block_ids_sidecar": list(normalized_blocks),
             "block_param_order_sidecar": list(block_param_order),
-            "block_params_used_in_scoring": False,
+            "use_block_sidecar_params": True,
+            "block_params_used_in_scoring": True,
         }
 
+    # Model C parameterization: diffusion scale is fixed to 1.0 so boundary/drift
+    # estimates are interpreted relative to this fixed scale.
     return {
         "boundary_a": float(named["a"]),
         "non_decision_time_ms": float(named["t0"]),

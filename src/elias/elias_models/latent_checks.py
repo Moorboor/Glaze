@@ -1,7 +1,12 @@
+# Step 5 hazard/change diagnostics and latent-state reporting utilities.
+# Main functions: run_change_hazard_checks and run_latent_reporting.
+# Uses winner-model parameters from Step 4 and evaluates trial/block summaries.
+
 """Step 5 latent-variable and hazard-signature diagnostics."""
 
 from __future__ import annotations
 
+from concurrent.futures import ProcessPoolExecutor
 import sys
 from pathlib import Path
 from typing import Any
@@ -12,6 +17,7 @@ import pandas as pd
 from .continuous_models import run_model_a_threshold, run_model_b_asymptote
 from .data_validation import _validate_required_columns
 from .ddm_model import run_model_c_ddm
+from .seed_utils import derive_seed, resolve_worker_count
 
 try:
     from evan.glaze import psi_function
@@ -189,12 +195,16 @@ def run_change_hazard_checks(
         )
         raise ValueError(f"Missing winner model assignments for participants: {missing}")
 
+    # Deterministic trial ordering is required for within-block change-point
+    # detection via `shift`.
     test_df = test_df.sort_values(["participant_id", "block_id", "trial_index"]).reset_index(drop=True)
+    # Change point = current correct side differs from previous trial in block.
     test_df["is_change_point"] = (
         test_df.groupby(["participant_id", "block_id"], sort=True)["correct_side"]
         .transform(lambda x: x.ne(x.shift(1)).fillna(False))
         .astype(int)
     )
+    # Hazard signature features derived from normative prior transform.
     test_df["psi_t"] = [
         float(psi_function(float(prev_l), float(h_value)))
         for prev_l, h_value in zip(
@@ -221,6 +231,8 @@ def run_change_hazard_checks(
         change_chunk = chunk[chunk["is_change_point"] == 1]
         stable_chunk = chunk[chunk["is_change_point"] == 0]
 
+        # Summaries are separated for change vs stable segments to expose whether
+        # behavior differs around inferred switches.
         block_rows.append(
             {
                 "participant_id": str(participant_id),
@@ -280,6 +292,8 @@ def _run_winner_model_for_latents(
     latent_cont_noise_std: float,
     random_seed: int,
 ) -> pd.DataFrame:
+    # Dispatch to the same model implementation used in fitting/scoring so
+    # latent reporting is aligned with Step 4 winner definitions.
     if winner_model_name == "cont_threshold":
         kwargs = {
             key: best_model_params[key]
@@ -314,13 +328,72 @@ def _run_winner_model_for_latents(
     raise ValueError(f"Unsupported winner model for Step 5 latent reporting: {winner_model_name}")
 
 
+def _run_latent_participant_task(task_payload: dict[str, Any]) -> dict[str, Any]:
+    """Run Step 5 latent resimulation for one participant.
+
+    This helper is module-level so it can be executed in worker processes.
+    """
+    participant_id = str(task_payload["participant_id"])
+    winner_model_name = str(task_payload["winner_model_name"])
+    best_model_params = dict(task_payload["best_model_params"])
+    participant_df = task_payload["participant_df"].copy()
+    ddm_n_samples_per_trial = int(task_payload["ddm_n_samples_per_trial"])
+    latent_cont_noise_std = float(task_payload["latent_cont_noise_std"])
+    random_seed = int(task_payload["random_seed"])
+    run_id = str(task_payload["run_id"])
+
+    model_seed = derive_seed(
+        random_seed,
+        run_id,
+        participant_id,
+        winner_model_name,
+        "latent",
+    )
+    # Re-simulate using fitted winner parameters to obtain trial-level latent
+    # outputs (predicted choice/RT/belief proxies).
+    sim_df = _run_winner_model_for_latents(
+        participant_df,
+        winner_model_name=winner_model_name,
+        best_model_params=best_model_params,
+        ddm_n_samples_per_trial=ddm_n_samples_per_trial,
+        latent_cont_noise_std=latent_cont_noise_std,
+        random_seed=model_seed,
+    )
+
+    sim_df["winner_model_name"] = winner_model_name
+    enrichment = participant_df[
+        ["row_id", "split", "correct_side"]
+    ].copy()
+    # Keep split/correct-side fields from original data for trial-level
+    # diagnostics while preserving one-row-per-trial identity.
+    merged = sim_df.merge(enrichment, on="row_id", how="left", validate="one_to_one")
+    merged["predicted_choice_binary"] = np.where(
+        merged["predicted_decision"] == 1,
+        1.0,
+        np.where(merged["predicted_decision"] == -1, 0.0, np.nan),
+    )
+    merged["predicted_timeout"] = (merged["predicted_decision"] == 0).astype(int)
+    merged["choice_match_excluding_timeout"] = np.where(
+        np.isnan(merged["predicted_choice_binary"]),
+        np.nan,
+        (pd.to_numeric(merged["choice"], errors="coerce") == merged["predicted_choice_binary"]).astype(float),
+    )
+    trial_df = merged[list(_LATENT_TRIAL_COLUMNS)].copy()
+    return {
+        "participant_id": participant_id,
+        "trial_df": trial_df,
+    }
+
+
 def run_latent_reporting(
     df_all: pd.DataFrame,
     winner_parameter_table: pd.DataFrame,
     *,
+    run_id: str,
     ddm_n_samples_per_trial: int,
     latent_cont_noise_std: float,
     random_seed: int,
+    workers: int = 1,
 ) -> dict[str, pd.DataFrame]:
     """Re-simulate winner-model latents on ALL rows and summarize by block."""
     if int(ddm_n_samples_per_trial) <= 0:
@@ -349,9 +422,9 @@ def run_latent_reporting(
     df = df_all.copy()
     df["participant_id"] = df["participant_id"].astype(str)
 
-    trial_tables: list[pd.DataFrame] = []
+    participant_tasks: list[dict[str, Any]] = []
     sorted_winners = winners.sort_values("participant_id").reset_index(drop=True)
-    for participant_idx, winner_row in enumerate(sorted_winners.itertuples(index=False)):
+    for winner_row in sorted_winners.itertuples(index=False):
         participant_id = str(winner_row.participant_id)
         winner_model_name = str(winner_row.winner_model_name)
         best_model_params = dict(winner_row.best_model_params)
@@ -359,34 +432,33 @@ def run_latent_reporting(
         participant_df = df[df["participant_id"] == participant_id].copy()
         if participant_df.empty:
             continue
-
-        model_seed = int(random_seed) + participant_idx * 1_000_003
-        sim_df = _run_winner_model_for_latents(
-            participant_df,
-            winner_model_name=winner_model_name,
-            best_model_params=best_model_params,
-            ddm_n_samples_per_trial=int(ddm_n_samples_per_trial),
-            latent_cont_noise_std=float(latent_cont_noise_std),
-            random_seed=model_seed,
+        participant_tasks.append(
+            {
+                "participant_id": participant_id,
+                "winner_model_name": winner_model_name,
+                "best_model_params": best_model_params,
+                "participant_df": participant_df,
+                "ddm_n_samples_per_trial": int(ddm_n_samples_per_trial),
+                "latent_cont_noise_std": float(latent_cont_noise_std),
+                "random_seed": int(random_seed),
+                "run_id": str(run_id),
+            }
         )
 
-        sim_df["winner_model_name"] = winner_model_name
-        enrichment = participant_df[
-            ["row_id", "split", "correct_side"]
-        ].copy()
-        merged = sim_df.merge(enrichment, on="row_id", how="left", validate="one_to_one")
-        merged["predicted_choice_binary"] = np.where(
-            merged["predicted_decision"] == 1,
-            1.0,
-            np.where(merged["predicted_decision"] == -1, 0.0, np.nan),
-        )
-        merged["predicted_timeout"] = (merged["predicted_decision"] == 0).astype(int)
-        merged["choice_match_excluding_timeout"] = np.where(
-            np.isnan(merged["predicted_choice_binary"]),
-            np.nan,
-            (pd.to_numeric(merged["choice"], errors="coerce") == merged["predicted_choice_binary"]).astype(float),
-        )
-        trial_tables.append(merged[list(_LATENT_TRIAL_COLUMNS)].copy())
+    if not participant_tasks:
+        return {
+            "latent_trajectories_trial": pd.DataFrame(columns=_LATENT_TRIAL_COLUMNS),
+            "latent_quantities_block": pd.DataFrame(columns=_LATENT_BLOCK_COLUMNS),
+        }
+
+    effective_workers = resolve_worker_count(int(workers), len(participant_tasks))
+    if effective_workers == 1:
+        participant_results = [_run_latent_participant_task(task) for task in participant_tasks]
+    else:
+        with ProcessPoolExecutor(max_workers=effective_workers) as executor:
+            participant_results = list(executor.map(_run_latent_participant_task, participant_tasks))
+
+    trial_tables = [participant_result["trial_df"] for participant_result in participant_results]
 
     trial_df = (
         pd.concat(trial_tables, ignore_index=True)
@@ -399,6 +471,8 @@ def run_latent_reporting(
         ["participant_id", "block_id", "winner_model_name"],
         sort=True,
     ):
+        # Block-level reduction focuses on interpretable operational metrics:
+        # timeout behavior, choice alignment, RT error, and belief error.
         block_rows.append(
             {
                 "participant_id": str(participant_id),

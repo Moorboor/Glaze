@@ -1,3 +1,7 @@
+# Validation utilities for DataFrame schemas and numeric coercion.
+# Main helpers enforce required columns, finite numeric inputs,
+# and normalized choice coding.
+
 from __future__ import annotations
 
 import warnings

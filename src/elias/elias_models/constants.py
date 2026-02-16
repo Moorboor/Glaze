@@ -1,3 +1,7 @@
+# Shared constants and schema contracts used throughout Elias pipelines.
+# Main exports: EPSILON, required input columns, model-ready columns,
+# and supported model names.
+
 from __future__ import annotations
 
 import sys

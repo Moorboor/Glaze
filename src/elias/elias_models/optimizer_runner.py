@@ -1,3 +1,7 @@
+# Parameter-fitting routine for Elias candidate models.
+# Main function: fit_model_parameters.
+# Uses multi-start stochastic local search in unconstrained eta space.
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -43,6 +47,8 @@ def _build_fit_config(fit_config: dict[str, object] | None) -> dict[str, object]
             else:
                 merged[key] = value
 
+    # Validate early so callers get explicit configuration errors instead of
+    # failing deep inside simulation loops.
     if int(merged["n_starts"]) <= 0:
         raise ValueError("n_starts must be > 0.")
     if int(merged["n_iterations"]) < 0:
@@ -75,10 +81,17 @@ def _score_eta_candidate(
     fit_config: dict[str, object],
     score_seed: int,
 ) -> dict[str, Any]:
+    # Candidate vectors live in eta-space (unconstrained); scorer consumes
+    # theta-space params after transform and model-specific mapping.
     theta_vector = eta_to_theta(model_name, eta_vector)
     model_params = theta_to_scoring_model_params(model_name, theta_vector)
     fixed_params = dict(fit_config["fixed_model_params"])
+    sidecar_override = fixed_params.get("use_block_sidecar_params", None)
     fixed_params.update(model_params)
+    if sidecar_override is not None:
+        # Config-level override is applied after model mapping so callers can
+        # force-disable sidecar consumption for ablation/testing runs.
+        fixed_params["use_block_sidecar_params"] = bool(sidecar_override)
 
     score_output = score_model_simulation_likelihood(
         df,
@@ -125,6 +138,7 @@ def fit_model_parameters(
     step_decay = float(config["step_scale_decay"])
     base_seed = int(config["score_seed_base"])
 
+    # Multi-start random initialization helps avoid poor local minima.
     for start_idx in range(n_starts):
         current_eta = rng.normal(loc=0.0, scale=1.0, size=n_params)
         score_seed = base_seed + start_idx * 100_003
@@ -149,6 +163,7 @@ def fit_model_parameters(
         if best_result is None or current_result["joint_score"] < best_result["joint_score"]:
             best_result = current_result
 
+        # Local random-walk refinement with geometric step-size decay.
         local_scale = step_scale
         for iteration_idx in range(n_iterations):
             proposed_eta = current_eta + rng.normal(
@@ -166,6 +181,8 @@ def fit_model_parameters(
             )
             n_evaluations += 1
 
+            # Greedy acceptance keeps implementation simple and deterministic
+            # given seeds/config.
             accepted = proposed_result["joint_score"] < current_result["joint_score"]
             if accepted:
                 current_eta = proposed_eta
@@ -188,6 +205,8 @@ def fit_model_parameters(
     if best_result is None:
         raise RuntimeError("No optimization evaluations were performed.")
 
+    # Materialize best solution in both eta and named/theta forms for
+    # persistence, reproducibility, and later reporting.
     best_theta = np.asarray(best_result["theta_vector"], dtype=float)
     best_eta = np.asarray(best_result["eta_vector"], dtype=float)
     best_named_params = theta_to_named_params(model_name, best_theta)

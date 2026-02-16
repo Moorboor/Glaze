@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ProcessPoolExecutor
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,7 @@ from .results_store import (
     save_json,
     save_table_csv,
 )
+from .seed_utils import derive_seed, resolve_worker_count
 from .winner_rules import apply_step4_winner_rules
 
 
@@ -56,6 +58,8 @@ _DEFAULT_STEP4_PIPELINE_CONFIG: dict[str, object] = {
     "random_seed": 0,
     "winner_primary_score_column": "joint_score",
     "winner_tie_tolerance": 1e-9,
+    "workers": 1,
+    "use_block_sidecar_params": True,
 }
 
 
@@ -88,6 +92,8 @@ def build_step4_pipeline_config(
     random_seed: int = 0,
     winner_primary_score_column: str = "joint_score",
     winner_tie_tolerance: float = 1e-9,
+    workers: int = 1,
+    use_block_sidecar_params: bool = True,
 ) -> dict[str, object]:
     """Build canonical Step 4 pipeline configuration.
 
@@ -123,6 +129,8 @@ def build_step4_pipeline_config(
         "random_seed": int(random_seed),
         "winner_primary_score_column": str(winner_primary_score_column),
         "winner_tie_tolerance": float(winner_tie_tolerance),
+        "workers": int(workers),
+        "use_block_sidecar_params": bool(use_block_sidecar_params),
     }
 
     if cfg["fit_n_starts"] <= 0:
@@ -150,6 +158,8 @@ def build_step4_pipeline_config(
         )
     if cfg["winner_tie_tolerance"] < 0.0:
         raise ValueError("winner_tie_tolerance must be >= 0.")
+    if cfg["workers"] < 1:
+        raise ValueError("workers must be >= 1.")
     return cfg
 
 
@@ -171,6 +181,8 @@ def _normalize_step4_pipeline_config(config: dict[str, object]) -> dict[str, obj
         random_seed=int(merged["random_seed"]),
         winner_primary_score_column=str(merged["winner_primary_score_column"]),
         winner_tie_tolerance=float(merged["winner_tie_tolerance"]),
+        workers=int(merged["workers"]),
+        use_block_sidecar_params=bool(merged["use_block_sidecar_params"]),
     )
 
 
@@ -186,6 +198,7 @@ def _fit_config_from_step4_config(config: dict[str, object]) -> dict[str, object
         "fixed_model_params": {
             "dt_ms": float(config["dt_ms"]),
             "max_duration_ms": float(config["max_duration_ms"]),
+            "use_block_sidecar_params": bool(config["use_block_sidecar_params"]),
         },
     }
 
@@ -255,6 +268,160 @@ def _score_dataset_for_model(
     )
 
 
+def _run_step4_participant_task(task_payload: dict[str, Any]) -> dict[str, Any]:
+    """Execute all model fits/scores for one participant.
+
+    This helper is intentionally module-level so it can be executed in a
+    `ProcessPoolExecutor` worker process.
+    """
+    participant_id = str(task_payload["participant_id"])
+    participant_df = task_payload["participant_df"].copy()
+    candidate_models = tuple(task_payload["candidate_models"])
+    fit_config = dict(task_payload["fit_config"])
+    normalized_config = dict(task_payload["normalized_config"])
+    run_id = str(task_payload["run_id"])
+    base_seed = int(task_payload["base_seed"])
+
+    train_df = participant_df[participant_df["split"] == "TRAIN"].copy()
+    test_df = participant_df[participant_df["split"] == "TEST"].copy()
+    if train_df.empty or test_df.empty:
+        raise ValueError(
+            f"Participant '{participant_id}' requires both TRAIN and TEST rows. "
+            f"Found TRAIN={len(train_df)}, TEST={len(test_df)}."
+        )
+
+    fit_rows: list[dict[str, Any]] = []
+    test_score_rows: list[dict[str, Any]] = []
+    test_block_score_rows: list[dict[str, Any]] = []
+
+    for model_name in candidate_models:
+        # Seeds are derived from semantic keys only; they do not depend on loop
+        # index or worker scheduling order.
+        fit_seed = derive_seed(base_seed, run_id, participant_id, model_name, "fit")
+        test_seed = derive_seed(base_seed, run_id, participant_id, model_name, "test")
+
+        fit_output = fit_model_parameters(
+            train_df,
+            model_name=str(model_name),
+            fit_config=fit_config,
+            random_seed=int(fit_seed),
+        )
+        best_model_params = dict(fit_output["best_model_params"])
+        best_model_params["dt_ms"] = float(normalized_config["dt_ms"])
+        best_model_params["max_duration_ms"] = float(normalized_config["max_duration_ms"])
+        best_model_params["use_block_sidecar_params"] = bool(
+            normalized_config["use_block_sidecar_params"]
+        )
+
+        fit_rows.append(
+            {
+                "participant_id": str(participant_id),
+                "candidate_model_name": str(model_name),
+                "fit_seed": int(fit_seed),
+                "n_train_trials": int(len(train_df)),
+                "n_test_trials": int(len(test_df)),
+                "n_parameters": int(fit_output["n_parameters"]),
+                "n_evaluations": int(fit_output["n_evaluations"]),
+                "fit_n_starts": int(fit_output["n_starts"]),
+                "fit_n_iterations": int(fit_output["n_iterations"]),
+                "best_joint_score_train": float(fit_output["best_joint_score"]),
+                "best_choice_only_score_train": float(fit_output["best_choice_only_score"]),
+                "best_rt_only_cond_score_train": float(fit_output["best_rt_only_cond_score"]),
+                "best_theta": np.asarray(fit_output["best_theta"], dtype=float),
+                "best_eta": np.asarray(fit_output["best_eta"], dtype=float),
+                "best_named_params": dict(fit_output["best_named_params"]),
+                "best_model_params": best_model_params,
+            }
+        )
+
+        test_score_output = _score_dataset_for_model(
+            test_df,
+            model_name=str(model_name),
+            model_params=best_model_params,
+            n_sims_per_trial=int(normalized_config["eval_n_sims_per_trial"]),
+            rt_bin_width_ms=float(normalized_config["rt_bin_width_ms"]),
+            rt_max_ms=float(normalized_config["rt_max_ms"]),
+            eps=float(normalized_config["eps"]),
+            random_seed=int(test_seed),
+        )
+        test_aggregate = dict(test_score_output["aggregate_scores"])
+        n_params = int(fit_output["n_parameters"])
+        n_trials = int(test_aggregate["n_trials"])
+        bic_score = float(
+            2.0 * float(test_aggregate["joint_score"])
+            + float(n_params) * np.log(max(n_trials, 1))
+        )
+
+        test_score_rows.append(
+            {
+                "participant_id": str(participant_id),
+                "candidate_model_name": str(model_name),
+                "fit_seed": int(fit_seed),
+                "test_seed": int(test_seed),
+                "n_train_trials": int(len(train_df)),
+                "n_test_trials": n_trials,
+                "n_parameters": n_params,
+                "joint_score": float(test_aggregate["joint_score"]),
+                "choice_only_score": float(test_aggregate["choice_only_score"]),
+                "rt_only_cond_score": float(test_aggregate["rt_only_cond_score"]),
+                "bic_score": bic_score,
+                "best_theta": np.asarray(fit_output["best_theta"], dtype=float),
+                "best_eta": np.asarray(fit_output["best_eta"], dtype=float),
+                "best_named_params": dict(fit_output["best_named_params"]),
+                "best_model_params": best_model_params,
+            }
+        )
+
+        for block_id, block_test_df in test_df.groupby("block_id", sort=True):
+            block_seed = derive_seed(
+                base_seed,
+                run_id,
+                participant_id,
+                model_name,
+                "test_block",
+                int(block_id),
+            )
+            block_score_output = _score_dataset_for_model(
+                block_test_df,
+                model_name=str(model_name),
+                model_params=best_model_params,
+                n_sims_per_trial=int(normalized_config["eval_n_sims_per_trial"]),
+                rt_bin_width_ms=float(normalized_config["rt_bin_width_ms"]),
+                rt_max_ms=float(normalized_config["rt_max_ms"]),
+                eps=float(normalized_config["eps"]),
+                random_seed=int(block_seed),
+            )
+            block_aggregate = dict(block_score_output["aggregate_scores"])
+            block_n_trials = int(block_aggregate["n_trials"])
+            block_bic_score = float(
+                2.0 * float(block_aggregate["joint_score"])
+                + float(n_params) * np.log(max(block_n_trials, 1))
+            )
+            test_block_score_rows.append(
+                {
+                    "participant_id": str(participant_id),
+                    "block_id": int(block_id),
+                    "candidate_model_name": str(model_name),
+                    "fit_seed": int(fit_seed),
+                    "test_seed": int(test_seed),
+                    "block_test_seed": int(block_seed),
+                    "n_block_test_trials": int(block_n_trials),
+                    "n_parameters": n_params,
+                    "joint_score": float(block_aggregate["joint_score"]),
+                    "choice_only_score": float(block_aggregate["choice_only_score"]),
+                    "rt_only_cond_score": float(block_aggregate["rt_only_cond_score"]),
+                    "bic_score": block_bic_score,
+                }
+            )
+
+    return {
+        "participant_id": str(participant_id),
+        "fit_rows": fit_rows,
+        "test_score_rows": test_score_rows,
+        "test_block_score_rows": test_block_score_rows,
+    }
+
+
 def run_step4_pipeline(
     df_all: pd.DataFrame,
     *,
@@ -312,127 +479,31 @@ def run_step4_pipeline(
     test_block_score_rows: list[dict[str, Any]] = []
 
     base_seed = int(normalized_config["random_seed"])
-    for participant_idx, participant_id in enumerate(participant_ids):
-        participant_df = model_df[model_df["participant_id"] == str(participant_id)].copy()
-        train_df = participant_df[participant_df["split"] == "TRAIN"].copy()
-        test_df = participant_df[participant_df["split"] == "TEST"].copy()
-        if train_df.empty or test_df.empty:
-            raise ValueError(
-                f"Participant '{participant_id}' requires both TRAIN and TEST rows. "
-                f"Found TRAIN={len(train_df)}, TEST={len(test_df)}."
-            )
+    participant_tasks: list[dict[str, Any]] = []
+    for participant_id in participant_ids:
+        participant_tasks.append(
+            {
+                "participant_id": str(participant_id),
+                "participant_df": model_df[model_df["participant_id"] == str(participant_id)].copy(),
+                "candidate_models": candidate_models,
+                "fit_config": fit_config,
+                "normalized_config": normalized_config,
+                "run_id": str(run_id),
+                "base_seed": int(base_seed),
+            }
+        )
 
-        for model_idx, model_name in enumerate(candidate_models):
-            # Seed schedule is deterministic across participants/models for reproducibility.
-            fit_seed = base_seed + participant_idx * 1_000_003 + model_idx * 10_007
-            test_seed = fit_seed + 1
+    workers = resolve_worker_count(int(normalized_config["workers"]), len(participant_tasks))
+    if workers == 1:
+        participant_results = [_run_step4_participant_task(task) for task in participant_tasks]
+    else:
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            participant_results = list(executor.map(_run_step4_participant_task, participant_tasks))
 
-            fit_output = fit_model_parameters(
-                train_df,
-                model_name=model_name,
-                fit_config=fit_config,
-                random_seed=int(fit_seed),
-            )
-            best_model_params = dict(fit_output["best_model_params"])
-            best_model_params["dt_ms"] = float(normalized_config["dt_ms"])
-            best_model_params["max_duration_ms"] = float(normalized_config["max_duration_ms"])
-
-            fit_rows.append(
-                {
-                    "participant_id": str(participant_id),
-                    "candidate_model_name": str(model_name),
-                    "fit_seed": int(fit_seed),
-                    "n_train_trials": int(len(train_df)),
-                    "n_test_trials": int(len(test_df)),
-                    "n_parameters": int(fit_output["n_parameters"]),
-                    "n_evaluations": int(fit_output["n_evaluations"]),
-                    "fit_n_starts": int(fit_output["n_starts"]),
-                    "fit_n_iterations": int(fit_output["n_iterations"]),
-                    "best_joint_score_train": float(fit_output["best_joint_score"]),
-                    "best_choice_only_score_train": float(fit_output["best_choice_only_score"]),
-                    "best_rt_only_cond_score_train": float(fit_output["best_rt_only_cond_score"]),
-                    "best_theta": np.asarray(fit_output["best_theta"], dtype=float),
-                    "best_eta": np.asarray(fit_output["best_eta"], dtype=float),
-                    "best_named_params": dict(fit_output["best_named_params"]),
-                    "best_model_params": best_model_params,
-                }
-            )
-
-            test_score_output = _score_dataset_for_model(
-                test_df,
-                model_name=str(model_name),
-                model_params=best_model_params,
-                n_sims_per_trial=int(normalized_config["eval_n_sims_per_trial"]),
-                rt_bin_width_ms=float(normalized_config["rt_bin_width_ms"]),
-                rt_max_ms=float(normalized_config["rt_max_ms"]),
-                eps=float(normalized_config["eps"]),
-                random_seed=int(test_seed),
-            )
-            test_aggregate = dict(test_score_output["aggregate_scores"])
-            n_params = int(fit_output["n_parameters"])
-            n_trials = int(test_aggregate["n_trials"])
-            bic_score = float(
-                2.0 * float(test_aggregate["joint_score"])
-                + float(n_params) * np.log(max(n_trials, 1))
-            )
-
-            test_score_rows.append(
-                {
-                    "participant_id": str(participant_id),
-                    "candidate_model_name": str(model_name),
-                    "fit_seed": int(fit_seed),
-                    "test_seed": int(test_seed),
-                    "n_train_trials": int(len(train_df)),
-                    "n_test_trials": n_trials,
-                    "n_parameters": n_params,
-                    "joint_score": float(test_aggregate["joint_score"]),
-                    "choice_only_score": float(test_aggregate["choice_only_score"]),
-                    "rt_only_cond_score": float(test_aggregate["rt_only_cond_score"]),
-                    "bic_score": bic_score,
-                    "best_theta": np.asarray(fit_output["best_theta"], dtype=float),
-                    "best_eta": np.asarray(fit_output["best_eta"], dtype=float),
-                    "best_named_params": dict(fit_output["best_named_params"]),
-                    "best_model_params": best_model_params,
-                }
-            )
-
-            for block_idx, (block_id, block_test_df) in enumerate(
-                test_df.groupby("block_id", sort=True)
-            ):
-                block_seed = test_seed + 1_000 + block_idx
-                block_score_output = _score_dataset_for_model(
-                    block_test_df,
-                    model_name=str(model_name),
-                    model_params=best_model_params,
-                    n_sims_per_trial=int(normalized_config["eval_n_sims_per_trial"]),
-                    rt_bin_width_ms=float(normalized_config["rt_bin_width_ms"]),
-                    rt_max_ms=float(normalized_config["rt_max_ms"]),
-                    eps=float(normalized_config["eps"]),
-                    random_seed=int(block_seed),
-                )
-                block_aggregate = dict(block_score_output["aggregate_scores"])
-                block_n_trials = int(block_aggregate["n_trials"])
-                block_bic_score = float(
-                    2.0 * float(block_aggregate["joint_score"])
-                    + float(n_params) * np.log(max(block_n_trials, 1))
-                )
-
-                test_block_score_rows.append(
-                    {
-                        "participant_id": str(participant_id),
-                        "block_id": int(block_id),
-                        "candidate_model_name": str(model_name),
-                        "fit_seed": int(fit_seed),
-                        "test_seed": int(test_seed),
-                        "block_test_seed": int(block_seed),
-                        "n_block_test_trials": int(block_n_trials),
-                        "n_parameters": n_params,
-                        "joint_score": float(block_aggregate["joint_score"]),
-                        "choice_only_score": float(block_aggregate["choice_only_score"]),
-                        "rt_only_cond_score": float(block_aggregate["rt_only_cond_score"]),
-                        "bic_score": block_bic_score,
-                    }
-                )
+    for participant_result in participant_results:
+        fit_rows.extend(participant_result["fit_rows"])
+        test_score_rows.extend(participant_result["test_score_rows"])
+        test_block_score_rows.extend(participant_result["test_block_score_rows"])
 
     participant_model_fits_train = pd.DataFrame(fit_rows)
     participant_model_scores_test = pd.DataFrame(test_score_rows)

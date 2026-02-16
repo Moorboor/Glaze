@@ -1,0 +1,40 @@
+{
+  "run_id": "run_2026_02_16_smoke",
+  "pipeline_name": "step345_pipeline",
+  "created_at_utc": "2026-02-16T10:39:33+00:00",
+  "output_root": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias",
+  "run_dir": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_16_smoke",
+  "config_path": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_16_smoke/config.json",
+  "status": "completed",
+  "step3": {
+    "run_id": "run_2026_02_16_smoke",
+    "run_dir": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_16_smoke/step3",
+    "status": "weak",
+    "soft_gate": {
+      "overall_status": "weak",
+      "joint_diag_min": 0.6,
+      "param_median_r_min": 0.3
+    }
+  },
+  "step4": {
+    "run_id": "run_2026_02_16_smoke",
+    "run_dir": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_16_smoke/step4",
+    "status": "completed",
+    "group_winner_model_name": "cont_asymptote"
+  },
+  "step5": {
+    "run_id": "run_2026_02_16_smoke",
+    "run_dir": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_16_smoke/step5"
+  },
+  "step5_status": "completed",
+  "step5_table_paths": {
+    "step5_posterior_predictive_trial": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_16_smoke/step5/tables/step5_posterior_predictive_trial.csv",
+    "step5_posterior_predictive_block": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_16_smoke/step5/tables/step5_posterior_predictive_block.csv",
+    "step5_hazard_signature_trial": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_16_smoke/step5/tables/step5_hazard_signature_trial.csv",
+    "step5_hazard_signature_block": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_16_smoke/step5/tables/step5_hazard_signature_block.csv",
+    "step5_latent_trajectories_trial": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_16_smoke/step5/tables/step5_latent_trajectories_trial.csv",
+    "step5_latent_quantities_block": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_16_smoke/step5/tables/step5_latent_quantities_block.csv",
+    "step5_final_conclusion": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_16_smoke/step5/tables/step5_final_conclusion.csv"
+  },
+  "step5_report_path": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_16_smoke/step5/reports/step5_report.md"
+}

@@ -13,6 +13,7 @@ from .data_loading import load_participant_data, preprocess_loaded_participant_d
 from .reporting import (
     Step5PipelineError,
     build_step5_pipeline_config,
+    run_step45_pipeline,
     run_step345_pipeline,
 )
 from .surrogate_recovery import (
@@ -84,6 +85,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--fit-n-sims-per-trial", type=int, default=150)
     run_parser.add_argument("--dt-ms", type=float, default=1.0)
     run_parser.add_argument("--max-duration-ms", type=float, default=5000.0)
+    run_parser.add_argument("--workers", type=int, default=1)
+    run_parser.add_argument("--max-timeout-fallback-rate", type=float, default=0.20)
+    run_parser.add_argument("--max-timeout-resample-retries", type=int, default=5)
     run_parser.add_argument("--seed", type=int, default=0)
     run_parser.add_argument("--overwrite", action="store_true")
 
@@ -136,6 +140,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         choices=["joint_score", "choice_only_score", "rt_only_cond_score", "bic_score"],
     )
     participant_run_parser.add_argument("--winner-tie-tolerance", type=float, default=1e-9)
+    participant_run_parser.add_argument("--workers", type=int, default=1)
     participant_run_parser.add_argument("--seed", type=int, default=0)
     participant_run_parser.add_argument("--overwrite", action="store_true")
 
@@ -182,6 +187,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     pipeline_parser.add_argument("--step3-fit-n-starts", type=int, default=4)
     pipeline_parser.add_argument("--step3-fit-n-iterations", type=int, default=8)
     pipeline_parser.add_argument("--step3-fit-n-sims-per-trial", type=int, default=150)
+    pipeline_parser.add_argument("--step3-workers", type=int, default=1)
+    pipeline_parser.add_argument("--step3-max-timeout-fallback-rate", type=float, default=0.20)
+    pipeline_parser.add_argument("--step3-max-timeout-resample-retries", type=int, default=5)
     pipeline_parser.add_argument("--step3-soft-gate-joint-diag-min", type=float, default=0.60)
     pipeline_parser.add_argument("--step3-soft-gate-param-median-r-min", type=float, default=0.30)
 
@@ -189,6 +197,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     pipeline_parser.add_argument("--step4-fit-n-iterations", type=int, default=8)
     pipeline_parser.add_argument("--step4-fit-n-sims-per-trial", type=int, default=150)
     pipeline_parser.add_argument("--step4-eval-n-sims-per-trial", type=int, default=150)
+    pipeline_parser.add_argument("--step4-workers", type=int, default=1)
     pipeline_parser.add_argument("--step4-rt-bin-width-ms", type=float, default=20.0)
     pipeline_parser.add_argument("--step4-rt-max-ms", type=float, default=5000.0)
     pipeline_parser.add_argument("--step4-eps", type=float, default=1e-12)
@@ -204,6 +213,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     pipeline_parser.add_argument("--step5-rt-bin-width-ms", type=float, default=20.0)
     pipeline_parser.add_argument("--step5-rt-max-ms", type=float, default=5000.0)
     pipeline_parser.add_argument("--step5-eps", type=float, default=1e-12)
+    pipeline_parser.add_argument("--step5-workers", type=int, default=1)
     pipeline_parser.add_argument(
         "--step5-seed",
         type=int,
@@ -211,6 +221,60 @@ def _build_arg_parser() -> argparse.ArgumentParser:
         help="Optional override seed for Step 5. Defaults to --seed when omitted.",
     )
     pipeline_parser.add_argument("--step5-latent-cont-noise-std", type=float, default=0.0)
+
+    pipeline45_parser = subparsers.add_parser(
+        "pipeline-run-45",
+        help="Run Step 4+5 only, requiring an existing Step 3 run under the same run id.",
+    )
+    pipeline45_parser.add_argument("--run-id", type=str, required=True)
+    pipeline45_parser.add_argument("--output-root", type=str, default="data/elias")
+    pipeline45_parser.add_argument("--csv-path", type=str, default="data/participants.csv")
+    pipeline45_parser.add_argument("--hazard-col", type=str, default="subjective_h_snapshot")
+    pipeline45_parser.add_argument(
+        "--participant-ids",
+        type=str,
+        default=None,
+        help="Optional comma-separated participant IDs.",
+    )
+    pipeline45_parser.add_argument(
+        "--candidate-models",
+        type=str,
+        default="cont_threshold,cont_asymptote,ddm_dnm",
+        help="Comma-separated candidate model names used by Step 4.",
+    )
+    pipeline45_parser.add_argument("--seed", type=int, default=0)
+    pipeline45_parser.add_argument("--dt-ms", type=float, default=1.0)
+    pipeline45_parser.add_argument("--max-duration-ms", type=float, default=5000.0)
+    pipeline45_parser.add_argument("--overwrite", action="store_true")
+
+    pipeline45_parser.add_argument("--step4-fit-n-starts", type=int, default=4)
+    pipeline45_parser.add_argument("--step4-fit-n-iterations", type=int, default=8)
+    pipeline45_parser.add_argument("--step4-fit-n-sims-per-trial", type=int, default=150)
+    pipeline45_parser.add_argument("--step4-eval-n-sims-per-trial", type=int, default=150)
+    pipeline45_parser.add_argument("--step4-workers", type=int, default=1)
+    pipeline45_parser.add_argument("--step4-rt-bin-width-ms", type=float, default=20.0)
+    pipeline45_parser.add_argument("--step4-rt-max-ms", type=float, default=5000.0)
+    pipeline45_parser.add_argument("--step4-eps", type=float, default=1e-12)
+    pipeline45_parser.add_argument(
+        "--step4-winner-primary-score-column",
+        type=str,
+        default="joint_score",
+        choices=["joint_score", "choice_only_score", "rt_only_cond_score", "bic_score"],
+    )
+    pipeline45_parser.add_argument("--step4-winner-tie-tolerance", type=float, default=1e-9)
+    pipeline45_parser.add_argument("--step5-ppc-n-sims-per-trial", type=int, default=200)
+    pipeline45_parser.add_argument("--step5-ddm-n-samples-per-trial", type=int, default=200)
+    pipeline45_parser.add_argument("--step5-rt-bin-width-ms", type=float, default=20.0)
+    pipeline45_parser.add_argument("--step5-rt-max-ms", type=float, default=5000.0)
+    pipeline45_parser.add_argument("--step5-eps", type=float, default=1e-12)
+    pipeline45_parser.add_argument("--step5-workers", type=int, default=1)
+    pipeline45_parser.add_argument(
+        "--step5-seed",
+        type=int,
+        default=None,
+        help="Optional override seed for Step 5. Defaults to --seed when omitted.",
+    )
+    pipeline45_parser.add_argument("--step5-latent-cont-noise-std", type=float, default=0.0)
 
     return parser
 
@@ -226,6 +290,9 @@ def _cmd_surrogate_run(args: argparse.Namespace) -> None:
         fit_n_sims_per_trial=int(args.fit_n_sims_per_trial),
         dt_ms=float(args.dt_ms),
         max_duration_ms=float(args.max_duration_ms),
+        workers=int(args.workers),
+        max_timeout_fallback_rate=float(args.max_timeout_fallback_rate),
+        max_timeout_resample_retries=int(args.max_timeout_resample_retries),
         random_seed=int(args.seed),
     )
 
@@ -301,6 +368,7 @@ def _cmd_participant_run(args: argparse.Namespace) -> None:
         random_seed=int(args.seed),
         winner_primary_score_column=str(args.winner_primary_score_column),
         winner_tie_tolerance=float(args.winner_tie_tolerance),
+        workers=int(args.workers),
     )
 
     df_all = _load_preprocessed_dataset(
@@ -377,6 +445,9 @@ def _cmd_pipeline_run(args: argparse.Namespace) -> None:
         fit_n_sims_per_trial=int(args.step3_fit_n_sims_per_trial),
         dt_ms=float(args.dt_ms),
         max_duration_ms=float(args.max_duration_ms),
+        workers=int(args.step3_workers),
+        max_timeout_fallback_rate=float(args.step3_max_timeout_fallback_rate),
+        max_timeout_resample_retries=int(args.step3_max_timeout_resample_retries),
         random_seed=int(args.seed),
         soft_gate_joint_diag_min=float(args.step3_soft_gate_joint_diag_min),
         soft_gate_param_median_r_min=float(args.step3_soft_gate_param_median_r_min),
@@ -395,6 +466,7 @@ def _cmd_pipeline_run(args: argparse.Namespace) -> None:
         random_seed=int(args.seed),
         winner_primary_score_column=str(args.step4_winner_primary_score_column),
         winner_tie_tolerance=float(args.step4_winner_tie_tolerance),
+        workers=int(args.step4_workers),
     )
     step5_seed = int(args.step5_seed) if args.step5_seed is not None else int(args.seed)
     step5_config = build_step5_pipeline_config(
@@ -405,6 +477,7 @@ def _cmd_pipeline_run(args: argparse.Namespace) -> None:
         eps=float(args.step5_eps),
         random_seed=int(step5_seed),
         latent_cont_noise_std=float(args.step5_latent_cont_noise_std),
+        workers=int(args.step5_workers),
     )
 
     df_all = _load_preprocessed_dataset(
@@ -440,6 +513,84 @@ def _cmd_pipeline_run(args: argparse.Namespace) -> None:
     print(f"Step 5 report path: {pipeline_output['step5_report_path']}")
 
 
+def _cmd_pipeline_run45(args: argparse.Namespace) -> None:
+    """Run Step 4 and Step 5 only, reusing an existing Step 3 run under the same run id."""
+    candidate_models = _parse_candidate_models(args.candidate_models)
+    participant_ids = _parse_participant_ids(args.participant_ids)
+
+    # Step 4+5 requires an existing Step 3 run; surface the soft-gate status up front.
+    step3_loaded = load_step3_run(run_id=str(args.run_id), output_root=str(args.output_root))
+    soft_gate = dict(step3_loaded["manifest"].get("soft_gate", {}))
+    soft_gate_status = str(soft_gate.get("overall_status", "unknown"))
+    if soft_gate_status != "pass":
+        print(
+            (
+                "Warning: Step 3 soft-gate is not pass "
+                f"({soft_gate_status}). Continuing with Step 4+5 as requested."
+            ),
+            file=sys.stderr,
+        )
+
+    step4_config = build_step4_pipeline_config(
+        candidate_models=candidate_models,
+        fit_n_starts=int(args.step4_fit_n_starts),
+        fit_n_iterations=int(args.step4_fit_n_iterations),
+        fit_n_sims_per_trial=int(args.step4_fit_n_sims_per_trial),
+        eval_n_sims_per_trial=int(args.step4_eval_n_sims_per_trial),
+        rt_bin_width_ms=float(args.step4_rt_bin_width_ms),
+        rt_max_ms=float(args.step4_rt_max_ms),
+        eps=float(args.step4_eps),
+        dt_ms=float(args.dt_ms),
+        max_duration_ms=float(args.max_duration_ms),
+        random_seed=int(args.seed),
+        winner_primary_score_column=str(args.step4_winner_primary_score_column),
+        winner_tie_tolerance=float(args.step4_winner_tie_tolerance),
+        workers=int(args.step4_workers),
+    )
+    step5_seed = int(args.step5_seed) if args.step5_seed is not None else int(args.seed)
+    step5_config = build_step5_pipeline_config(
+        ppc_n_sims_per_trial=int(args.step5_ppc_n_sims_per_trial),
+        ddm_n_samples_per_trial=int(args.step5_ddm_n_samples_per_trial),
+        rt_bin_width_ms=float(args.step5_rt_bin_width_ms),
+        rt_max_ms=float(args.step5_rt_max_ms),
+        eps=float(args.step5_eps),
+        random_seed=int(step5_seed),
+        latent_cont_noise_std=float(args.step5_latent_cont_noise_std),
+        workers=int(args.step5_workers),
+    )
+
+    df_all = _load_preprocessed_dataset(
+        args.csv_path,
+        args.hazard_col,
+        participant_ids=participant_ids,
+    )
+    try:
+        pipeline_output = run_step45_pipeline(
+            df_all,
+            run_id=str(args.run_id),
+            output_root=str(args.output_root),
+            step4_config=step4_config,
+            step5_config=step5_config,
+            overwrite=bool(args.overwrite),
+        )
+    except Step5PipelineError as exc:
+        print(f"Step 4+5 run failed at Step 5: {args.run_id}", file=sys.stderr)
+        if exc.manifest_path is not None:
+            print(f"Master manifest path: {exc.manifest_path}", file=sys.stderr)
+        if exc.error_log_path is not None:
+            print(f"Step 5 error log path: {exc.error_log_path}", file=sys.stderr)
+        raise
+
+    print(f"Step 4+5 run finished: {pipeline_output['run_id']}")
+    print(f"Master run directory: {pipeline_output['run_root']}")
+    print(f"Master manifest path: {pipeline_output['manifest_path']}")
+    print(f"Step 3 directory: {pipeline_output['step3_output']['run_dir']}")
+    print(f"Step 4 directory: {pipeline_output['step4_output']['run_dir']}")
+    print(f"Step 5 directory: {pipeline_output['step5_run_dir']}")
+    print(f"Step 5 status: {pipeline_output['manifest']['step5_status']}")
+    print(f"Step 5 report path: {pipeline_output['step5_report_path']}")
+
+
 def main() -> None:
     """Run CLI entrypoint for Elias model pipelines."""
     args = _build_arg_parser().parse_args()
@@ -464,6 +615,9 @@ def main() -> None:
         return
     if args.command == "pipeline-run":
         _cmd_pipeline_run(args)
+        return
+    if args.command == "pipeline-run-45":
+        _cmd_pipeline_run45(args)
         return
 
     raise ValueError(f"Unsupported command: {args.command}")

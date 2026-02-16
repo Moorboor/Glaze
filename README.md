@@ -102,6 +102,11 @@ PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run \
 
 This single command runs Step 3, Step 4, and Step 5.
 
+Worker controls for faster runs:
+- Step 3 worker count: `--step3-workers`
+- Step 4 worker count: `--step4-workers`
+- Step 5 worker count: `--step5-workers`
+
 How this command works:
 
 - `PYTHONPATH=src:src/elias` temporarily adds `src/` and `src/elias/` to Python's import path for this command.
@@ -134,6 +139,66 @@ PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run \
   --step5-ppc-n-sims-per-trial 20 \
   --step5-ddm-n-samples-per-trial 30 \
   --overwrite
+```
+
+Run individual steps (or Step 4+5) with workers:
+
+Step 3 only:
+
+```bash
+PYTHONPATH=src:src/elias python -m elias_models.cli surrogate-run \
+  --run-id run_2026_02_16_step3_only \
+  --csv-path data/participants.csv \
+  --output-root data/elias \
+  --workers 10
+```
+
+Step 4 only:
+
+```bash
+PYTHONPATH=src:src/elias python -m elias_models.cli participant-run \
+  --run-id run_2026_02_16_step4_only \
+  --csv-path data/participants.csv \
+  --output-root data/elias \
+  --workers 10
+```
+
+Step 4+5 only (requires existing Step 3 under same `run_id`):
+
+```bash
+PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run-45 \
+  --run-id run_2026_02_16_final \
+  --csv-path data/participants.csv \
+  --output-root data/elias \
+  --step4-workers 10 \
+  --step5-workers 10
+```
+
+Step 3+4+5 together:
+
+```bash
+PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run \
+  --run-id run_2026_02_16_full \
+  --csv-path data/participants.csv \
+  --output-root data/elias \
+  --step3-workers 10 \
+  --step4-workers 10 \
+  --step5-workers 10
+```
+
+How many workers make sense:
+- Start with `10` workers on a 10-core local machine.
+- Do not exceed physical cores: a good upper bound is `os.cpu_count()`.
+- Do not exceed available parallel tasks:
+  - Step 3 max useful workers is about `n_candidate_models * n_surrogates_per_model`.
+  - Step 4 max useful workers is about `n_participants`.
+  - Step 5 max useful workers is about `n_participants` (participant-level PPC/latent tasks).
+- Above those bounds, overhead usually increases and performance can get worse.
+
+Quick core-count check:
+
+```bash
+python -c "import os; print(os.cpu_count())"
 ```
 
 tmux-friendly long run pattern:

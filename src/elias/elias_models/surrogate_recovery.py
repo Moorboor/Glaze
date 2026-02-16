@@ -5,9 +5,11 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ProcessPoolExecutor
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -35,6 +37,7 @@ from .results_store import (
     save_json,
     save_table_csv,
 )
+from .seed_utils import derive_seed, resolve_worker_count
 
 
 STEP3_PIPELINE_NAME = "step3"
@@ -72,6 +75,10 @@ _DEFAULT_STEP3_PIPELINE_CONFIG: dict[str, object] = {
     "random_seed": 0,
     "soft_gate_joint_diag_min": 0.60,
     "soft_gate_param_median_r_min": 0.30,
+    "workers": 1,
+    "use_block_sidecar_params": True,
+    "max_timeout_fallback_rate": 0.20,
+    "max_timeout_resample_retries": 5,
 }
 
 
@@ -124,6 +131,10 @@ def build_step3_pipeline_config(
     random_seed: int = 0,
     soft_gate_joint_diag_min: float = 0.60,
     soft_gate_param_median_r_min: float = 0.30,
+    workers: int = 1,
+    use_block_sidecar_params: bool = True,
+    max_timeout_fallback_rate: float = 0.20,
+    max_timeout_resample_retries: int = 5,
 ) -> dict[str, object]:
     """Build one canonical Step 3 pipeline config without notebook-specific split keys."""
     cfg = {
@@ -138,6 +149,10 @@ def build_step3_pipeline_config(
         "random_seed": int(random_seed),
         "soft_gate_joint_diag_min": float(soft_gate_joint_diag_min),
         "soft_gate_param_median_r_min": float(soft_gate_param_median_r_min),
+        "workers": int(workers),
+        "use_block_sidecar_params": bool(use_block_sidecar_params),
+        "max_timeout_fallback_rate": float(max_timeout_fallback_rate),
+        "max_timeout_resample_retries": int(max_timeout_resample_retries),
     }
 
     if cfg["n_surrogates_per_model"] <= 0:
@@ -158,6 +173,12 @@ def build_step3_pipeline_config(
         raise ValueError("soft_gate_joint_diag_min must be in [0, 1].")
     if not (-1.0 <= cfg["soft_gate_param_median_r_min"] <= 1.0):
         raise ValueError("soft_gate_param_median_r_min must be in [-1, 1].")
+    if cfg["workers"] < 1:
+        raise ValueError("workers must be >= 1.")
+    if not (0.0 <= cfg["max_timeout_fallback_rate"] <= 1.0):
+        raise ValueError("max_timeout_fallback_rate must be in [0, 1].")
+    if cfg["max_timeout_resample_retries"] < 0:
+        raise ValueError("max_timeout_resample_retries must be >= 0.")
 
     return cfg
 
@@ -177,6 +198,10 @@ def _normalize_step3_pipeline_config(config: dict[str, object]) -> dict[str, obj
         random_seed=int(merged["random_seed"]),
         soft_gate_joint_diag_min=float(merged["soft_gate_joint_diag_min"]),
         soft_gate_param_median_r_min=float(merged["soft_gate_param_median_r_min"]),
+        workers=int(merged["workers"]),
+        use_block_sidecar_params=bool(merged["use_block_sidecar_params"]),
+        max_timeout_fallback_rate=float(merged["max_timeout_fallback_rate"]),
+        max_timeout_resample_retries=int(merged["max_timeout_resample_retries"]),
     )
 
 
@@ -188,6 +213,7 @@ def _fit_config_from_step3_config(config: dict[str, object]) -> dict[str, object
         "fixed_model_params": {
             "dt_ms": float(config["dt_ms"]),
             "max_duration_ms": float(config["max_duration_ms"]),
+            "use_block_sidecar_params": bool(config["use_block_sidecar_params"]),
         },
     }
 
@@ -198,6 +224,7 @@ def _surrogate_config_from_step3_config(config: dict[str, object]) -> dict[str, 
         "fixed_model_params": {
             "dt_ms": float(config["dt_ms"]),
             "max_duration_ms": float(config["max_duration_ms"]),
+            "use_block_sidecar_params": bool(config["use_block_sidecar_params"]),
         },
     }
 
@@ -338,6 +365,12 @@ def simulate_surrogate_dataset(
     model_params = theta_to_scoring_model_params(model_name_str, np.asarray(theta, dtype=float))
     fixed_params = dict(config["fixed_model_params"])
     fixed_params.update(model_params)
+    # Allow pipeline configuration to explicitly disable sidecar consumption even
+    # though parameter mapping includes sidecar metadata by default.
+    if "use_block_sidecar_params" in config.get("fixed_model_params", {}):
+        fixed_params["use_block_sidecar_params"] = bool(
+            config["fixed_model_params"]["use_block_sidecar_params"]
+        )
 
     n_draws_per_trial = int(config["n_draws_per_trial"])
     seed_value = int(random_seed)
@@ -355,6 +388,12 @@ def simulate_surrogate_dataset(
             threshold_mode=str(
                 fixed_params.get("threshold_mode", "participant_block_mean_abs_belief")
             ),
+            block_threshold_map=(
+                dict(fixed_params.get("threshold_by_block_sidecar", {}))
+                if model_name_str == "cont_threshold"
+                else dict(fixed_params.get("asymptote_by_block_sidecar", {}))
+            ),
+            use_block_sidecar_params=bool(fixed_params.get("use_block_sidecar_params", False)),
             random_seed=seed_value,
         )
     else:
@@ -410,8 +449,16 @@ def fit_models_on_surrogate(
     )
 
     rows: list[dict[str, object]] = []
-    for model_idx, candidate_model in enumerate(models):
-        seed_value = int(random_seed) + model_idx * 31_337
+    for candidate_model in models:
+        # Seed derivation is key-based (not loop-index based) so run order and
+        # parallel task scheduling cannot change fitted outputs.
+        seed_value = derive_seed(
+            int(random_seed),
+            str(surrogate_id),
+            str(generating_model_name),
+            str(candidate_model),
+            "fit_candidate",
+        )
         fit_output = fit_model_parameters(
             df=df_surrogate,
             model_name=candidate_model,
@@ -442,6 +489,148 @@ def fit_models_on_surrogate(
         )
 
     return pd.DataFrame(rows)
+
+
+def _run_step3_surrogate_task(task_payload: dict[str, Any]) -> dict[str, Any]:
+    """Generate one surrogate with timeout guard, then fit all candidate models.
+
+    This helper is module-level so it can be executed in worker processes.
+    """
+    model_df = task_payload["model_df"].copy()
+    generating_model = str(task_payload["generating_model"])
+    sample_index = int(task_payload["sample_index"])
+    surrogate_id = f"{generating_model}_s{sample_index:03d}"
+    run_id = str(task_payload["run_id"])
+    base_seed = int(task_payload["base_seed"])
+    surrogate_config = dict(task_payload["surrogate_config"])
+    fit_config = dict(task_payload["fit_config"])
+    candidate_models = tuple(task_payload["candidate_models"])
+    max_timeout_fallback_rate = float(task_payload["max_timeout_fallback_rate"])
+    max_timeout_resample_retries = int(task_payload["max_timeout_resample_retries"])
+
+    best_candidate: dict[str, Any] | None = None
+    timeout_guard_triggered = False
+
+    for attempt_index in range(max_timeout_resample_retries + 1):
+        sampling_seed = derive_seed(
+            base_seed,
+            run_id,
+            generating_model,
+            sample_index,
+            "sampling",
+            attempt_index,
+        )
+        simulation_seed = derive_seed(
+            base_seed,
+            run_id,
+            generating_model,
+            sample_index,
+            "simulation",
+            attempt_index,
+        )
+
+        theta_df = sample_pseudo_true_thetas(
+            generating_model,
+            n_sets=1,
+            random_seed=int(sampling_seed),
+        )
+        theta_vector = np.asarray(theta_df.iloc[0]["theta_vector"], dtype=float)
+        eta_vector = np.asarray(theta_df.iloc[0]["eta_vector"], dtype=float)
+
+        surrogate_df = simulate_surrogate_dataset(
+            df_template=model_df,
+            model_name=generating_model,
+            theta=theta_vector,
+            random_seed=int(simulation_seed),
+            surrogate_id=surrogate_id,
+            surrogate_config=surrogate_config,
+        )
+        surrogate_df["sample_index"] = int(sample_index)
+
+        n_rows = int(len(surrogate_df))
+        timeout_fallback_count = int(surrogate_df["timeout_fallback_count"].iloc[0])
+        timeout_fallback_rate = float(timeout_fallback_count / max(n_rows, 1))
+
+        candidate_payload = {
+            "attempt_index": int(attempt_index),
+            "sampling_seed": int(sampling_seed),
+            "simulation_seed": int(simulation_seed),
+            "theta_vector": theta_vector,
+            "eta_vector": eta_vector,
+            "surrogate_df": surrogate_df,
+            "timeout_fallback_count": int(timeout_fallback_count),
+            "timeout_fallback_rate": float(timeout_fallback_rate),
+        }
+        if (
+            best_candidate is None
+            or float(candidate_payload["timeout_fallback_rate"]) < float(best_candidate["timeout_fallback_rate"])
+        ):
+            best_candidate = candidate_payload
+
+        if timeout_fallback_rate <= max_timeout_fallback_rate:
+            break
+        timeout_guard_triggered = True
+
+    if best_candidate is None:
+        raise RuntimeError(f"Failed to generate surrogate candidate for {surrogate_id}.")
+
+    best_attempt_index = int(best_candidate["attempt_index"])
+    fitting_seed = derive_seed(
+        base_seed,
+        run_id,
+        generating_model,
+        sample_index,
+        "fitting",
+        best_attempt_index,
+    )
+    fit_table = fit_models_on_surrogate(
+        df_surrogate=best_candidate["surrogate_df"],
+        candidate_models=candidate_models,
+        fit_config=fit_config,
+        random_seed=int(fitting_seed),
+    )
+
+    pseudo_row = {
+        "surrogate_id": surrogate_id,
+        "generating_model_name": generating_model,
+        "sample_index": int(sample_index),
+        "theta_vector": np.asarray(best_candidate["theta_vector"], dtype=float),
+        "eta_vector": np.asarray(best_candidate["eta_vector"], dtype=float),
+        "sampling_seed": int(best_candidate["sampling_seed"]),
+        "simulation_seed": int(best_candidate["simulation_seed"]),
+        "fitting_seed": int(fitting_seed),
+    }
+    spec = get_parameter_spec(generating_model)
+    theta_vec = np.asarray(best_candidate["theta_vector"], dtype=float)
+    for param_idx, spec_entry in enumerate(spec):
+        pseudo_row[f"theta_{spec_entry['name']}"] = float(theta_vec[param_idx])
+
+    surrogate_meta_row = {
+        "surrogate_id": surrogate_id,
+        "generating_model_name": generating_model,
+        "sample_index": int(sample_index),
+        "n_rows": int(len(best_candidate["surrogate_df"])),
+        "n_unique_choices": int(best_candidate["surrogate_df"]["choice"].nunique()),
+        "min_rt_ms": float(best_candidate["surrogate_df"]["reaction_time_ms"].min()),
+        "max_rt_ms": float(best_candidate["surrogate_df"]["reaction_time_ms"].max()),
+        "timeout_fallback_count": int(best_candidate["timeout_fallback_count"]),
+        "timeout_fallback_rate": float(best_candidate["timeout_fallback_rate"]),
+        "timeout_guard_triggered": bool(timeout_guard_triggered),
+        "timeout_guard_attempts": int(best_attempt_index + 1),
+        "timeout_guard_exhausted": bool(
+            timeout_guard_triggered
+            and float(best_candidate["timeout_fallback_rate"]) > max_timeout_fallback_rate
+        ),
+    }
+
+    return {
+        "generating_model_name": generating_model,
+        "sample_index": int(sample_index),
+        "surrogate_df": best_candidate["surrogate_df"],
+        "fit_table": fit_table,
+        "pseudo_row": pseudo_row,
+        "surrogate_meta_row": surrogate_meta_row,
+    }
 
 
 def _build_recovery_tables(
@@ -733,7 +922,6 @@ def run_step3_pipeline(
     config_path = save_json(normalized_config, paths["run_dir"] / "config.json")
 
     model_df = _prepare_model_input(df_template)
-    rng = np.random.default_rng(int(normalized_config["random_seed"]))
     candidate_models = tuple(normalized_config["candidate_models"])
 
     pseudo_rows: list[dict[str, object]] = []
@@ -741,65 +929,44 @@ def run_step3_pipeline(
     surrogate_meta_rows: list[dict[str, object]] = []
     surrogate_trials_tables: list[pd.DataFrame] = []
 
+    # Build one deterministic task per surrogate sample. Each task can run in
+    # parallel because surrogate generation and fitting are independent.
+    surrogate_tasks: list[dict[str, Any]] = []
     for generating_model in candidate_models:
-        sample_seed = int(rng.integers(0, 2_147_483_647))
-        pseudo_theta_df = sample_pseudo_true_thetas(
-            generating_model,
-            n_sets=int(normalized_config["n_surrogates_per_model"]),
-            random_seed=sample_seed,
-        )
-
-        for set_row in pseudo_theta_df.itertuples(index=False):
-            surrogate_id = f"{generating_model}_s{int(set_row.sample_index):03d}"
-            simulation_seed = int(rng.integers(0, 2_147_483_647))
-            fitting_seed = int(rng.integers(0, 2_147_483_647))
-
-            surrogate_df = simulate_surrogate_dataset(
-                df_template=model_df,
-                model_name=generating_model,
-                theta=np.asarray(set_row.theta_vector, dtype=float),
-                random_seed=simulation_seed,
-                surrogate_id=surrogate_id,
-                surrogate_config=surrogate_config,
-            )
-            surrogate_df["sample_index"] = int(set_row.sample_index)
-            surrogate_trials_tables.append(surrogate_df)
-
-            fit_table = fit_models_on_surrogate(
-                df_surrogate=surrogate_df,
-                candidate_models=candidate_models,
-                fit_config=fit_config,
-                random_seed=fitting_seed,
-            )
-            fit_tables.append(fit_table)
-
-            pseudo_row = {
-                "surrogate_id": surrogate_id,
-                "generating_model_name": str(generating_model),
-                "sample_index": int(set_row.sample_index),
-                "theta_vector": np.asarray(set_row.theta_vector, dtype=float),
-                "eta_vector": np.asarray(set_row.eta_vector, dtype=float),
-                "sampling_seed": int(sample_seed),
-                "simulation_seed": int(simulation_seed),
-                "fitting_seed": int(fitting_seed),
-            }
-            spec = get_parameter_spec(generating_model)
-            for param_idx, spec_entry in enumerate(spec):
-                pseudo_row[f"theta_{spec_entry['name']}"] = float(set_row.theta_vector[param_idx])
-            pseudo_rows.append(pseudo_row)
-
-            surrogate_meta_rows.append(
+        for sample_index in range(int(normalized_config["n_surrogates_per_model"])):
+            surrogate_tasks.append(
                 {
-                    "surrogate_id": surrogate_id,
-                    "generating_model_name": str(generating_model),
-                    "sample_index": int(set_row.sample_index),
-                    "n_rows": int(len(surrogate_df)),
-                    "n_unique_choices": int(surrogate_df["choice"].nunique()),
-                    "min_rt_ms": float(surrogate_df["reaction_time_ms"].min()),
-                    "max_rt_ms": float(surrogate_df["reaction_time_ms"].max()),
-                    "timeout_fallback_count": int(surrogate_df["timeout_fallback_count"].iloc[0]),
+                    "model_df": model_df,
+                    "generating_model": str(generating_model),
+                    "sample_index": int(sample_index),
+                    "run_id": str(run_id),
+                    "base_seed": int(normalized_config["random_seed"]),
+                    "surrogate_config": surrogate_config,
+                    "fit_config": fit_config,
+                    "candidate_models": candidate_models,
+                    "max_timeout_fallback_rate": float(normalized_config["max_timeout_fallback_rate"]),
+                    "max_timeout_resample_retries": int(normalized_config["max_timeout_resample_retries"]),
                 }
             )
+
+    effective_workers = resolve_worker_count(int(normalized_config["workers"]), len(surrogate_tasks))
+    if effective_workers == 1:
+        task_results = [_run_step3_surrogate_task(task) for task in surrogate_tasks]
+    else:
+        with ProcessPoolExecutor(max_workers=effective_workers) as executor:
+            task_results = list(executor.map(_run_step3_surrogate_task, surrogate_tasks))
+
+    # Re-sort task outputs so persisted tables stay deterministic even when
+    # worker scheduling order differs.
+    task_results = sorted(
+        task_results,
+        key=lambda item: (str(item["generating_model_name"]), int(item["sample_index"])),
+    )
+    for task_result in task_results:
+        pseudo_rows.append(dict(task_result["pseudo_row"]))
+        surrogate_meta_rows.append(dict(task_result["surrogate_meta_row"]))
+        surrogate_trials_tables.append(task_result["surrogate_df"])
+        fit_tables.append(task_result["fit_table"])
 
     pseudo_true_table = pd.DataFrame(pseudo_rows)
     surrogate_metadata = pd.DataFrame(surrogate_meta_rows)
@@ -809,6 +976,20 @@ def run_step3_pipeline(
         else pd.DataFrame()
     )
     fit_results = pd.concat(fit_tables, ignore_index=True) if fit_tables else pd.DataFrame()
+
+    exhausted_timeout_rows = int(
+        surrogate_metadata.get("timeout_guard_exhausted", pd.Series(dtype=bool)).sum()
+        if not surrogate_metadata.empty
+        else 0
+    )
+    if exhausted_timeout_rows > 0:
+        warnings.warn(
+            "Step 3 timeout guard exhausted retries for "
+            f"{exhausted_timeout_rows} surrogate(s). Consider increasing "
+            "`max_timeout_resample_retries` or relaxing `max_timeout_fallback_rate`.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     recovery_outputs = compute_step3_recovery_from_fit_results(
         fit_results,
@@ -844,6 +1025,7 @@ def run_step3_pipeline(
     manifest_extra = {
         "n_surrogates_total": int(len(surrogate_metadata)),
         "n_fit_rows": int(len(fit_results)),
+        "n_timeout_guard_exhausted": int(exhausted_timeout_rows),
         "table_paths": table_paths,
         "soft_gate": {
             "overall_status": str(soft_gate_outputs["overall_status"]),

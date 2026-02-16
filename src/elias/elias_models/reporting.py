@@ -21,10 +21,11 @@ from .results_store import (
     build_basic_manifest,
     prepare_pipeline_run_root,
     prepare_run_dir,
+    resolve_unified_run_root,
     save_json,
     save_table_csv,
 )
-from .surrogate_recovery import run_step3_pipeline
+from .surrogate_recovery import load_step3_run, run_step3_pipeline
 from .train_test_eval import run_step4_pipeline
 
 
@@ -51,6 +52,7 @@ _DEFAULT_STEP5_PIPELINE_CONFIG: dict[str, object] = {
     "eps": 1e-12,
     "random_seed": 0,
     "latent_cont_noise_std": 0.0,
+    "workers": 1,
 }
 
 _STEP5_TABLE_NAMES: tuple[str, ...] = (
@@ -73,6 +75,7 @@ def build_step5_pipeline_config(
     eps: float = 1e-12,
     random_seed: int = 0,
     latent_cont_noise_std: float = 0.0,
+    workers: int = 1,
 ) -> dict[str, object]:
     """Build canonical Step 5 pipeline configuration.
 
@@ -84,6 +87,7 @@ def build_step5_pipeline_config(
         eps: Numerical floor for probability terms.
         random_seed: Base deterministic seed for Step 5 analyses.
         latent_cont_noise_std: Optional continuous-model noise for latent re-simulation.
+        workers: Number of worker processes for parallel participant tasks.
 
     Returns:
         Normalized Step 5 configuration payload.
@@ -100,6 +104,8 @@ def build_step5_pipeline_config(
         raise ValueError("eps must be > 0.")
     if float(latent_cont_noise_std) < 0.0:
         raise ValueError("latent_cont_noise_std must be >= 0.")
+    if int(workers) < 1:
+        raise ValueError("workers must be >= 1.")
 
     return {
         "ppc_n_sims_per_trial": int(ppc_n_sims_per_trial),
@@ -109,6 +115,7 @@ def build_step5_pipeline_config(
         "eps": float(eps),
         "random_seed": int(random_seed),
         "latent_cont_noise_std": float(latent_cont_noise_std),
+        "workers": int(workers),
     }
 
 
@@ -124,6 +131,7 @@ def _normalize_step5_pipeline_config(config: dict[str, object] | None) -> dict[s
         eps=float(merged["eps"]),
         random_seed=int(merged["random_seed"]),
         latent_cont_noise_std=float(merged["latent_cont_noise_std"]),
+        workers=int(merged["workers"]),
     )
 
 
@@ -187,6 +195,124 @@ def _save_step5_tables(
     return table_paths
 
 
+def _run_step5_stage(
+    *,
+    df_all: pd.DataFrame,
+    run_id: str,
+    output_root: str | Path,
+    step3_soft_gate: dict[str, Any],
+    step4_tables: dict[str, pd.DataFrame],
+    normalized_step5_config: dict[str, object],
+    step5_overwrite: bool,
+) -> dict[str, Any]:
+    """Execute and persist Step 5 diagnostics from Step 4 winner outputs.
+
+    Args:
+        df_all: Preprocessed participant table.
+        run_id: Shared run identifier.
+        output_root: Elias output root path.
+        step3_soft_gate: Step 3 soft-gate payload for recovery-aware conclusion.
+        step4_tables: Step 4 persisted in-memory tables.
+        normalized_step5_config: Validated Step 5 configuration.
+        step5_overwrite: Whether existing `step5` folder should be replaced.
+
+    Returns:
+        Dictionary containing Step 5 paths, status, tables, and error metadata.
+    """
+    step5_paths = prepare_run_dir(
+        output_root,
+        pipeline_name="step5",
+        run_id=str(run_id),
+        overwrite=bool(step5_overwrite),
+    )
+
+    reports_dir = step5_paths["run_dir"] / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    step5_status = "completed"
+    step5_error_message = ""
+    step5_report_path = ""
+    step5_error_log_path = ""
+    step5_tables: dict[str, pd.DataFrame] = {
+        table_name: pd.DataFrame() for table_name in _STEP5_TABLE_NAMES
+    }
+    step5_table_paths: dict[str, str] = {}
+
+    try:
+        # Step 5 diagnostics are computed from persisted Step 4 winners/params.
+        winner_parameter_table = _build_winner_parameter_table(step4_tables)
+        ppc_outputs = run_posterior_predictive_checks(
+            df_all,
+            winner_parameter_table,
+            run_id=str(run_id),
+            n_sims_per_trial=int(normalized_step5_config["ppc_n_sims_per_trial"]),
+            rt_bin_width_ms=float(normalized_step5_config["rt_bin_width_ms"]),
+            rt_max_ms=float(normalized_step5_config["rt_max_ms"]),
+            eps=float(normalized_step5_config["eps"]),
+            random_seed=int(normalized_step5_config["random_seed"]),
+            workers=int(normalized_step5_config["workers"]),
+        )
+        hazard_outputs = run_change_hazard_checks(df_all, winner_parameter_table)
+        latent_outputs = run_latent_reporting(
+            df_all,
+            winner_parameter_table,
+            run_id=str(run_id),
+            ddm_n_samples_per_trial=int(normalized_step5_config["ddm_n_samples_per_trial"]),
+            latent_cont_noise_std=float(normalized_step5_config["latent_cont_noise_std"]),
+            random_seed=int(normalized_step5_config["random_seed"]) + 37,
+            workers=int(normalized_step5_config["workers"]),
+        )
+
+        conclusion_table = build_recovery_aware_conclusion(
+            step3_soft_gate=dict(step3_soft_gate),
+            step4_group_winner_summary=step4_tables.get("group_winner_summary", pd.DataFrame()),
+            step5_posterior_predictive_block=ppc_outputs["posterior_predictive_block"],
+            step5_hazard_signature_block=hazard_outputs["hazard_signature_block"],
+            step5_latent_quantities_block=latent_outputs["latent_quantities_block"],
+        )
+
+        step5_tables = {
+            "step5_posterior_predictive_trial": ppc_outputs["posterior_predictive_trial"],
+            "step5_posterior_predictive_block": ppc_outputs["posterior_predictive_block"],
+            "step5_hazard_signature_trial": hazard_outputs["hazard_signature_trial"],
+            "step5_hazard_signature_block": hazard_outputs["hazard_signature_block"],
+            "step5_latent_trajectories_trial": latent_outputs["latent_trajectories_trial"],
+            "step5_latent_quantities_block": latent_outputs["latent_quantities_block"],
+            "step5_final_conclusion": conclusion_table,
+        }
+        step5_table_paths = _save_step5_tables(
+            step5_tables=step5_tables,
+            tables_dir=step5_paths["tables_dir"],
+        )
+        report_path_obj = write_step5_report_markdown(
+            reports_dir / "step5_report.md",
+            run_id=str(run_id),
+            step3_soft_gate=dict(step3_soft_gate),
+            step4_group_winner_summary=step4_tables.get("group_winner_summary", pd.DataFrame()),
+            conclusion_table=conclusion_table,
+            step5_posterior_predictive_block=ppc_outputs["posterior_predictive_block"],
+            step5_hazard_signature_block=hazard_outputs["hazard_signature_block"],
+            step5_latent_quantities_block=latent_outputs["latent_quantities_block"],
+        )
+        step5_report_path = str(report_path_obj)
+    except Exception as exc:
+        step5_status = "failed"
+        step5_error_message = str(exc)
+        error_log_path = step5_paths["logs_dir"] / "step5_error.txt"
+        error_log_path.write_text(traceback.format_exc(), encoding="utf-8")
+        step5_error_log_path = str(error_log_path)
+
+    return {
+        "step5_paths": step5_paths,
+        "step5_status": step5_status,
+        "step5_error_message": step5_error_message,
+        "step5_report_path": step5_report_path,
+        "step5_error_log_path": step5_error_log_path,
+        "step5_tables": step5_tables,
+        "step5_table_paths": step5_table_paths,
+    }
+
+
 def run_step345_pipeline(
     df_all: pd.DataFrame,
     *,
@@ -240,88 +366,22 @@ def run_step345_pipeline(
         overwrite=False,
     )
 
-    step5_paths = prepare_run_dir(
-        output_root,
-        pipeline_name="step5",
+    step5_stage = _run_step5_stage(
+        df_all=df_all,
         run_id=str(run_id),
-        overwrite=False,
+        output_root=output_root,
+        step3_soft_gate=dict(step3_output["manifest"].get("soft_gate", {})),
+        step4_tables=step4_output["tables"],
+        normalized_step5_config=normalized_step5_config,
+        step5_overwrite=False,
     )
-
-    reports_dir = step5_paths["run_dir"] / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
-
-    step5_status = "completed"
-    step5_error_message = ""
-    step5_report_path = ""
-    step5_error_log_path = ""
-    step5_tables: dict[str, pd.DataFrame] = {
-        table_name: pd.DataFrame() for table_name in _STEP5_TABLE_NAMES
-    }
-    step5_table_paths: dict[str, str] = {}
-
-    try:
-        # Step 5 diagnostics are computed from persisted Step 3/4 winners and params.
-        winner_parameter_table = _build_winner_parameter_table(step4_output["tables"])
-        ppc_outputs = run_posterior_predictive_checks(
-            df_all,
-            winner_parameter_table,
-            n_sims_per_trial=int(normalized_step5_config["ppc_n_sims_per_trial"]),
-            rt_bin_width_ms=float(normalized_step5_config["rt_bin_width_ms"]),
-            rt_max_ms=float(normalized_step5_config["rt_max_ms"]),
-            eps=float(normalized_step5_config["eps"]),
-            random_seed=int(normalized_step5_config["random_seed"]),
-        )
-        hazard_outputs = run_change_hazard_checks(df_all, winner_parameter_table)
-        latent_outputs = run_latent_reporting(
-            df_all,
-            winner_parameter_table,
-            ddm_n_samples_per_trial=int(normalized_step5_config["ddm_n_samples_per_trial"]),
-            latent_cont_noise_std=float(normalized_step5_config["latent_cont_noise_std"]),
-            random_seed=int(normalized_step5_config["random_seed"]) + 37,
-        )
-
-        conclusion_table = build_recovery_aware_conclusion(
-            step3_soft_gate=dict(step3_output["manifest"].get("soft_gate", {})),
-            step4_group_winner_summary=step4_output["tables"].get(
-                "group_winner_summary", pd.DataFrame()
-            ),
-            step5_posterior_predictive_block=ppc_outputs["posterior_predictive_block"],
-            step5_hazard_signature_block=hazard_outputs["hazard_signature_block"],
-            step5_latent_quantities_block=latent_outputs["latent_quantities_block"],
-        )
-
-        step5_tables = {
-            "step5_posterior_predictive_trial": ppc_outputs["posterior_predictive_trial"],
-            "step5_posterior_predictive_block": ppc_outputs["posterior_predictive_block"],
-            "step5_hazard_signature_trial": hazard_outputs["hazard_signature_trial"],
-            "step5_hazard_signature_block": hazard_outputs["hazard_signature_block"],
-            "step5_latent_trajectories_trial": latent_outputs["latent_trajectories_trial"],
-            "step5_latent_quantities_block": latent_outputs["latent_quantities_block"],
-            "step5_final_conclusion": conclusion_table,
-        }
-        step5_table_paths = _save_step5_tables(
-            step5_tables=step5_tables,
-            tables_dir=step5_paths["tables_dir"],
-        )
-        report_path_obj = write_step5_report_markdown(
-            reports_dir / "step5_report.md",
-            run_id=str(run_id),
-            step3_soft_gate=dict(step3_output["manifest"].get("soft_gate", {})),
-            step4_group_winner_summary=step4_output["tables"].get(
-                "group_winner_summary", pd.DataFrame()
-            ),
-            conclusion_table=conclusion_table,
-            step5_posterior_predictive_block=ppc_outputs["posterior_predictive_block"],
-            step5_hazard_signature_block=hazard_outputs["hazard_signature_block"],
-            step5_latent_quantities_block=latent_outputs["latent_quantities_block"],
-        )
-        step5_report_path = str(report_path_obj)
-    except Exception as exc:
-        step5_status = "failed"
-        step5_error_message = str(exc)
-        error_log_path = step5_paths["logs_dir"] / "step5_error.txt"
-        error_log_path.write_text(traceback.format_exc(), encoding="utf-8")
-        step5_error_log_path = str(error_log_path)
+    step5_paths = step5_stage["step5_paths"]
+    step5_status = str(step5_stage["step5_status"])
+    step5_error_message = str(step5_stage["step5_error_message"])
+    step5_report_path = str(step5_stage["step5_report_path"])
+    step5_error_log_path = str(step5_stage["step5_error_log_path"])
+    step5_tables = dict(step5_stage["step5_tables"])
+    step5_table_paths = dict(step5_stage["step5_table_paths"])
 
     config_payload = {
         "run_id": str(run_id),
@@ -364,6 +424,149 @@ def run_step345_pipeline(
     manifest = build_basic_manifest(
         run_id=str(run_id),
         pipeline_name="step345_pipeline",
+        output_root=output_root,
+        run_dir=run_root,
+        config_path=config_path,
+        status="completed" if step5_status == "completed" else "step5_failed",
+        extra=manifest_extra,
+    )
+    manifest_path = save_json(manifest, run_root / "manifest.json")
+
+    output = {
+        "run_id": str(run_id),
+        "run_dir": run_root,
+        "run_root": run_root,
+        "manifest_path": manifest_path,
+        "config_path": config_path,
+        "manifest": manifest,
+        "step3_run_id": str(run_id),
+        "step4_run_id": str(run_id),
+        "step5_run_id": str(run_id),
+        "step3_output": step3_output,
+        "step4_output": step4_output,
+        "step5_tables": step5_tables,
+        "step5_table_paths": step5_table_paths,
+        "step5_report_path": step5_report_path,
+        "step5_run_dir": step5_paths["run_dir"],
+    }
+
+    if step5_status != "completed":
+        raise Step5PipelineError(
+            "Step 5 failed. Reporting manifest and error log were persisted.",
+            manifest_path=manifest_path,
+            error_log_path=Path(step5_error_log_path) if step5_error_log_path else None,
+        )
+
+    return output
+
+
+def run_step45_pipeline(
+    df_all: pd.DataFrame,
+    *,
+    run_id: str,
+    output_root: str | Path = "data/elias",
+    step4_config: dict[str, object],
+    step5_config: dict[str, object] | None = None,
+    overwrite: bool = False,
+) -> dict[str, object]:
+    """Run Step 4 and Step 5 using an existing Step 3 run in the same run root.
+
+    Args:
+        df_all: Preprocessed participant table with TRAIN/TEST split labels.
+        run_id: Stable run identifier shared across all steps.
+        output_root: Absolute or repository-relative Elias output root.
+        step4_config: Step 4 configuration payload.
+        step5_config: Optional Step 5 override payload.
+        overwrite: Whether existing Step 4/5 folders should be replaced.
+
+    Returns:
+        Pipeline metadata, step outputs, and persisted artifact paths.
+
+    Raises:
+        FileNotFoundError: If required Step 3 artifacts are missing.
+        Step5PipelineError: If Step 5 fails after Step 4 was persisted.
+    """
+    if not str(run_id).strip():
+        raise ValueError("run_id must not be empty.")
+
+    run_root = resolve_unified_run_root(output_root, str(run_id))
+    step3_dir = run_root / "step3"
+    if not step3_dir.exists():
+        raise FileNotFoundError(
+            f"Step 3 directory is required for pipeline-run-45 but was not found: {step3_dir}"
+        )
+    step3_output = load_step3_run(run_id=str(run_id), output_root=output_root)
+    step3_soft_gate = dict(step3_output["manifest"].get("soft_gate", {}))
+
+    run_root.mkdir(parents=True, exist_ok=True)
+    normalized_step5_config = _normalize_step5_pipeline_config(step5_config)
+    step4_output = run_step4_pipeline(
+        df_all,
+        run_id=str(run_id),
+        output_root=output_root,
+        config=step4_config,
+        overwrite=bool(overwrite),
+    )
+
+    step5_stage = _run_step5_stage(
+        df_all=df_all,
+        run_id=str(run_id),
+        output_root=output_root,
+        step3_soft_gate=step3_soft_gate,
+        step4_tables=step4_output["tables"],
+        normalized_step5_config=normalized_step5_config,
+        step5_overwrite=bool(overwrite),
+    )
+    step5_paths = step5_stage["step5_paths"]
+    step5_status = str(step5_stage["step5_status"])
+    step5_error_message = str(step5_stage["step5_error_message"])
+    step5_report_path = str(step5_stage["step5_report_path"])
+    step5_error_log_path = str(step5_stage["step5_error_log_path"])
+    step5_tables = dict(step5_stage["step5_tables"])
+    step5_table_paths = dict(step5_stage["step5_table_paths"])
+
+    config_payload = {
+        "run_id": str(run_id),
+        "run_root": str(run_root),
+        "step3_config": step3_output["config"],
+        "step4_config": step4_output["config"],
+        "step5_config": normalized_step5_config,
+        "step5_status": step5_status,
+        "execution_mode": "step45_only",
+    }
+    config_path = save_json(config_payload, run_root / "config.json")
+
+    manifest_extra = {
+        "step3": {
+            "run_id": str(run_id),
+            "run_dir": str(step3_output["run_dir"]),
+            "status": str(step3_output["manifest"].get("status", "unknown")),
+            "soft_gate": step3_soft_gate,
+        },
+        "step4": {
+            "run_id": str(run_id),
+            "run_dir": str(step4_output["run_dir"]),
+            "status": str(step4_output["manifest"].get("status", "unknown")),
+            "group_winner_model_name": step4_output["manifest"].get(
+                "group_winner_model_name", "unknown"
+            ),
+        },
+        "step5": {
+            "run_id": str(run_id),
+            "run_dir": str(step5_paths["run_dir"]),
+        },
+        "step5_status": step5_status,
+        "step5_table_paths": step5_table_paths,
+        "step5_report_path": step5_report_path,
+    }
+    if step5_error_message:
+        manifest_extra["step5_error_message"] = step5_error_message
+    if step5_error_log_path:
+        manifest_extra["step5_error_log_path"] = step5_error_log_path
+
+    manifest = build_basic_manifest(
+        run_id=str(run_id),
+        pipeline_name="step45_pipeline",
         output_root=output_root,
         run_dir=run_root,
         config_path=config_path,

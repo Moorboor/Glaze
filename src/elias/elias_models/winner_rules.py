@@ -1,3 +1,7 @@
+# Rule-based winner selection utilities for Step 4.
+# Main functions derive participant winners, block consistency,
+# and group-level winner summaries from test scores.
+
 """Participant- and group-level winner rules for Step 4 evaluation."""
 
 from __future__ import annotations

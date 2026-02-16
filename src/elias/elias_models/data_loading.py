@@ -1,3 +1,7 @@
+# Data ingestion and preprocessing wrappers for participant-level CSV inputs.
+# Main functions: load_participant_data, preprocess_loaded_participant_data.
+# Delegates to shared common_helpers preprocessing with Elias-specific checks.
+
 from __future__ import annotations
 
 import sys

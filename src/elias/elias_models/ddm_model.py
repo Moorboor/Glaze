@@ -1,3 +1,7 @@
+# Drift-diffusion implementation for Model C (DNM-driven DDM).
+# Main function: run_model_c_ddm.
+# Internal helpers simulate one trajectory and map prior belief to start bias.
+
 from __future__ import annotations
 
 import sys
@@ -35,13 +39,17 @@ def _simulate_ddm_single_sample(
     rng: np.random.Generator,
 ) -> tuple[int, float, float]:
     """Simulate one DDM trajectory until boundary crossing or timeout."""
+    # Convert timestep to seconds for the SDE update while keeping all public
+    # APIs in milliseconds for easier integration with behavioral data.
     dt_sec = dt_ms / 1000.0
     sqrt_dt_sec = np.sqrt(dt_sec)
 
+    # Start point is encoded as a fraction z in [0,1] and mapped to [-a, +a].
     x = (2.0 * z - 1.0) * a
     time_current_ms = 0.0
 
     while time_current_ms < max_duration_ms:
+        # Euler-Maruyama update: deterministic drift + Gaussian diffusion.
         x += v * dt_sec + diffusion_sigma * sqrt_dt_sec * float(rng.standard_normal())
         time_current_ms += dt_ms
 
@@ -85,14 +93,18 @@ def run_model_c_ddm(
     results: list[dict[str, object]] = []
 
     for row in model_df.itertuples(index=False):
+        # psi_t carries the prior-belief term from the normative update.
         psi_t = float(psi_function(float(row.prev_observed_belief_L), float(row.H)))
+        # start_k controls how strongly prior belief moves the starting point.
         z_t = _sigmoid(float(start_k) * psi_t)
         z_t = float(np.clip(z_t, EPSILON, 1.0 - EPSILON))
+        # k_v scales sensory evidence (LLR) into DDM drift.
         v_t = float(llr_to_drift_scale) * float(row.LLR)
 
         decisions = np.zeros(n_samples_per_trial, dtype=int)
         rts_ms = np.zeros(n_samples_per_trial, dtype=float)
 
+        # Monte Carlo samples approximate the per-trial response distribution.
         for i in range(n_samples_per_trial):
             decision, rt_ms, _ = _simulate_ddm_single_sample(
                 v=v_t,
@@ -106,6 +118,8 @@ def run_model_c_ddm(
             decisions[i] = int(decision)
             rts_ms[i] = float(rt_ms + non_decision_time_ms)
 
+        # Convert sample cloud to compact summary statistics for downstream
+        # scoring/reporting tables.
         prob_pos = float(np.mean(decisions == 1))
         prob_neg = float(np.mean(decisions == -1))
         timeout_rate = float(np.mean(decisions == 0))

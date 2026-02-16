@@ -1,3 +1,7 @@
+# Step 5 report-construction helpers.
+# Main functions: build_recovery_aware_conclusion and write_step5_report_markdown.
+# Combines Step 3/4 recovery context with Step 5 diagnostics for final reporting.
+
 """Step 5 final conclusion and report export helpers."""
 
 from __future__ import annotations

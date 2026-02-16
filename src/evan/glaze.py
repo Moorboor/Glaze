@@ -1,3 +1,7 @@
+#
+# Evan-side Glaze simulation and visualization utilities.
+# Main reusable functions: psi_function, simulate_trial, plot_model_comparison.
+
 import sys
 from pathlib import Path
 import numpy as np
@@ -132,9 +136,27 @@ def simulate_trial(
         'time_points_ms': np.array(time_points)
     }
 
-def plot_model_comparison(df, params=None):
-    """
-    Plots comparison between real and predicted decisions/RTs.
+def plot_model_comparison(
+    df,
+    params=None,
+    *,
+    show=True,
+    save_path=None,
+    dpi=150,
+    return_fig=False
+):
+    """Plot comparison between observed and predicted behavior.
+
+    Args:
+        df: DataFrame with observed and predicted choice/RT/belief columns.
+        params: Optional dictionary rendered in the figure title.
+        show: Whether to display the figure using `plt.show()`.
+        save_path: Optional output image path.
+        dpi: Save resolution when `save_path` is provided.
+        return_fig: If True, return `(fig, axes)` for downstream usage.
+
+    Returns:
+        `(fig, axes)` when `return_fig` is True, otherwise None.
     """
     # Create a clean dataframe for plotting
     plot_df = df.copy()
@@ -327,7 +349,20 @@ def plot_model_comparison(df, params=None):
     ax6.grid(True, alpha=0.3)
     
     plt.tight_layout(rect=[0, 0.03, 1, 0.95]) if params else plt.tight_layout()
-    plt.show()
+
+    if save_path is not None:
+        target = Path(save_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(target, dpi=int(dpi), bbox_inches='tight')
+
+    if show:
+        plt.show()
+
+    if return_fig:
+        return fig, axes
+    if not show:
+        plt.close(fig)
+    return None
 
 def run_simulation_and_plot(csv_path, block_id=None):
     """
