@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -949,12 +949,37 @@ def run_step3_pipeline(
                 }
             )
 
+    # Live terminal progress indicator for long Step 3 runs.
+    # This intentionally uses simple stdout prints so it works in plain SSH/tmux
+    # sessions without extra dependencies.
+    def _print_progress(completed: int, total: int) -> None:
+        percent = 100.0 * (float(completed) / float(max(total, 1)))
+        print(
+            f"[step3] progress: {completed}/{total} surrogate tasks ({percent:5.1f}%)",
+            flush=True,
+        )
+
     effective_workers = resolve_worker_count(int(normalized_config["workers"]), len(surrogate_tasks))
+    print(
+        f"[step3] starting {len(surrogate_tasks)} surrogate tasks with workers={effective_workers}",
+        flush=True,
+    )
     if effective_workers == 1:
-        task_results = [_run_step3_surrogate_task(task) for task in surrogate_tasks]
+        task_results = []
+        for completed_count, task in enumerate(surrogate_tasks, start=1):
+            task_results.append(_run_step3_surrogate_task(task))
+            _print_progress(completed_count, len(surrogate_tasks))
     else:
+        task_results = []
         with ProcessPoolExecutor(max_workers=effective_workers) as executor:
-            task_results = list(executor.map(_run_step3_surrogate_task, surrogate_tasks))
+            future_map = {
+                executor.submit(_run_step3_surrogate_task, task): task
+                for task in surrogate_tasks
+            }
+            for completed_count, future in enumerate(as_completed(future_map), start=1):
+                # Propagate task exceptions immediately so failures are visible.
+                task_results.append(future.result())
+                _print_progress(completed_count, len(surrogate_tasks))
 
     # Re-sort task outputs so persisted tables stay deterministic even when
     # worker scheduling order differs.
