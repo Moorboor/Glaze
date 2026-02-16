@@ -35,6 +35,7 @@ Before you merge your work into `main`, complete this checklist:
 Glaze/
 ├── README.md                         # project setup and workflow notes
 ├── requirements.txt                  # Python dependencies
+├── environment.yml                   # Conda environment definition
 ├── data/
 │   ├── participants.csv              # merged dataset with participant_id column
 │   ├── elias.csv                     # participant source CSV (160 rows)
@@ -47,20 +48,27 @@ Glaze/
     ├── elias/                        # participant-wise model comparison workflow
     │   ├── elias_models/             # modular Elias modeling package
     │   │   ├── __init__.py
+    │   │   ├── cli.py
     │   │   ├── constants.py
+    │   │   ├── environment.py        # objective environment generator
     │   │   ├── data_loading.py
     │   │   ├── data_validation.py
     │   │   ├── continuous_models.py
     │   │   ├── ddm_model.py
     │   │   ├── likelihood_scoring.py
+    │   │   ├── optimizer_runner.py
     │   │   ├── orchestration.py
-    │   │   └── cli.py
+    │   │   ├── subjective_h.py       # internal subjective-H fitting + normative state
+    │   │   ├── surrogate_recovery.py
+    │   │   ├── train_test_eval.py
+    │   │   └── test_glaze_refactor.py
     │   └── elias_notebook.ipynb
     ├── evan/                         # Glaze model primitives used by model wrappers
     │   └── glaze.py
     └── old/                          # legacy/reference code and notebook
         ├── Group_9_Glaze_2015.ipynb
-        └── group_9_glaze_2015.py
+        ├── group_9_glaze_2015.py
+        └── triangles-task-main/      # imported TypeScript app/reference implementation
 ```
 
 ## Data Pipeline
@@ -116,7 +124,7 @@ Main entrypoint:
 
 ```bash
 PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run \
-  --run-id run_2026_02_15_full \
+  --run-id run_2026_02_16_full_env \
   --csv-path data/participants.csv \
   --step3-fit-objective choice_only \
   --step4-fit-objective choice_only \
@@ -124,6 +132,15 @@ PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run \
 ```
 
 This single command runs Step 3, Step 4, and Step 5.
+
+CLI compatibility notes:
+- `--hazard-col` is currently deprecated and ignored in active internal-H flow.
+- Step 3 supports `--step3-surrogate-subjective-h-global` to force a fixed generating subjective H for surrogate data.
+
+Run-id naming convention (env suffix):
+- Use `run_YYYY_MM_DD_<purpose>_env`.
+- `<purpose>` = high-level run type (`smoke`, `full`, `step3_only`, `step4_only`, etc.).
+- Use the `_env` suffix for runs after the internal-H/environment-separation fix.
 
 Worker controls for faster runs:
 - Step 3 worker count: `--step3-workers`
@@ -147,7 +164,7 @@ Quick smoke run (reduced simulation counts):
 
 ```bash
 PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run \
-  --run-id run_2026_02_15_smoke \
+  --run-id run_2026_02_16_smoke_env \
   --csv-path data/participants.csv \
   --output-root data/elias \
   --step3-n-surrogates-per-model 1 \
@@ -170,7 +187,7 @@ Step 3 only:
 
 ```bash
 PYTHONPATH=src:src/elias python -m elias_models.cli surrogate-run \
-  --run-id run_2026_02_16_step3_only \
+  --run-id run_2026_02_16_step3_only_env \
   --csv-path data/participants.csv \
   --output-root data/elias \
   --fit-objective choice_only \
@@ -181,7 +198,7 @@ Step 4 only:
 
 ```bash
 PYTHONPATH=src:src/elias python -m elias_models.cli participant-run \
-  --run-id run_2026_02_16_step4_only \
+  --run-id run_2026_02_16_step4_only_env \
   --csv-path data/participants.csv \
   --output-root data/elias \
   --fit-objective choice_only \
@@ -192,7 +209,7 @@ Step 4+5 only (requires existing Step 3 under same `run_id`):
 
 ```bash
 PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run-45 \
-  --run-id run_2026_02_16_final \
+  --run-id run_2026_02_16_final_env \
   --csv-path data/participants.csv \
   --output-root data/elias \
   --step4-workers 10 \
@@ -203,7 +220,7 @@ Step 3+4+5 together:
 
 ```bash
 PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run \
-  --run-id run_2026_02_16_full \
+  --run-id run_2026_02_16_full_env \
   --csv-path data/participants.csv \
   --output-root data/elias \
   --step3-workers 10 \
@@ -231,7 +248,7 @@ tmux-friendly long run pattern:
 ```bash
 tmux new -s glaze_run
 PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run \
-  --run-id run_2026_02_15_tmux \
+  --run-id run_2026_02_16_tmux_env \
   --csv-path data/participants.csv \
   --output-root data/elias
 ```
