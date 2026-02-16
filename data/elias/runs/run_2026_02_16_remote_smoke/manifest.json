@@ -1,0 +1,40 @@
+{
+  "run_id": "run_2026_02_16_remote_smoke",
+  "pipeline_name": "step345_pipeline",
+  "created_at_utc": "2026-02-16T11:02:15+00:00",
+  "output_root": "/net/projects/scratch/summer/valid_until_31_January_2027/escheller/Glaze/data/elias",
+  "run_dir": "/net/projects/scratch/summer/valid_until_31_January_2027/escheller/Glaze/data/elias/runs/run_2026_02_16_remote_smoke",
+  "config_path": "/net/projects/scratch/summer/valid_until_31_January_2027/escheller/Glaze/data/elias/runs/run_2026_02_16_remote_smoke/config.json",
+  "status": "completed",
+  "step3": {
+    "run_id": "run_2026_02_16_remote_smoke",
+    "run_dir": "/net/projects/scratch/summer/valid_until_31_January_2027/escheller/Glaze/data/elias/runs/run_2026_02_16_remote_smoke/step3",
+    "status": "weak",
+    "soft_gate": {
+      "overall_status": "weak",
+      "joint_diag_min": 0.6,
+      "param_median_r_min": 0.3
+    }
+  },
+  "step4": {
+    "run_id": "run_2026_02_16_remote_smoke",
+    "run_dir": "/net/projects/scratch/summer/valid_until_31_January_2027/escheller/Glaze/data/elias/runs/run_2026_02_16_remote_smoke/step4",
+    "status": "completed",
+    "group_winner_model_name": "cont_asymptote"
+  },
+  "step5": {
+    "run_id": "run_2026_02_16_remote_smoke",
+    "run_dir": "/net/projects/scratch/summer/valid_until_31_January_2027/escheller/Glaze/data/elias/runs/run_2026_02_16_remote_smoke/step5"
+  },
+  "step5_status": "completed",
+  "step5_table_paths": {
+    "step5_posterior_predictive_trial": "/net/projects/scratch/summer/valid_until_31_January_2027/escheller/Glaze/data/elias/runs/run_2026_02_16_remote_smoke/step5/tables/step5_posterior_predictive_trial.csv",
+    "step5_posterior_predictive_block": "/net/projects/scratch/summer/valid_until_31_January_2027/escheller/Glaze/data/elias/runs/run_2026_02_16_remote_smoke/step5/tables/step5_posterior_predictive_block.csv",
+    "step5_hazard_signature_trial": "/net/projects/scratch/summer/valid_until_31_January_2027/escheller/Glaze/data/elias/runs/run_2026_02_16_remote_smoke/step5/tables/step5_hazard_signature_trial.csv",
+    "step5_hazard_signature_block": "/net/projects/scratch/summer/valid_until_31_January_2027/escheller/Glaze/data/elias/runs/run_2026_02_16_remote_smoke/step5/tables/step5_hazard_signature_block.csv",
+    "step5_latent_trajectories_trial": "/net/projects/scratch/summer/valid_until_31_January_2027/escheller/Glaze/data/elias/runs/run_2026_02_16_remote_smoke/step5/tables/step5_latent_trajectories_trial.csv",
+    "step5_latent_quantities_block": "/net/projects/scratch/summer/valid_until_31_January_2027/escheller/Glaze/data/elias/runs/run_2026_02_16_remote_smoke/step5/tables/step5_latent_quantities_block.csv",
+    "step5_final_conclusion": "/net/projects/scratch/summer/valid_until_31_January_2027/escheller/Glaze/data/elias/runs/run_2026_02_16_remote_smoke/step5/tables/step5_final_conclusion.csv"
+  },
+  "step5_report_path": "/net/projects/scratch/summer/valid_until_31_January_2027/escheller/Glaze/data/elias/runs/run_2026_02_16_remote_smoke/step5/reports/step5_report.md"
+}

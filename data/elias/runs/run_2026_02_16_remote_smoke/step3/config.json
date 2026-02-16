@@ -1,0 +1,17 @@
+{
+  "candidate_models": [
+    "cont_threshold",
+    "cont_asymptote",
+    "ddm_dnm"
+  ],
+  "n_surrogates_per_model": 1,
+  "surrogate_n_draws_per_trial": 16,
+  "fit_n_starts": 1,
+  "fit_n_iterations": 0,
+  "fit_n_sims_per_trial": 20,
+  "dt_ms": 1.0,
+  "max_duration_ms": 5000.0,
+  "random_seed": 0,
+  "soft_gate_joint_diag_min": 0.6,
+  "soft_gate_param_median_r_min": 0.3
+}
