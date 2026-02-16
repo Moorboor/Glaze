@@ -79,12 +79,17 @@ Current merged dataset expectation:
 
 ## Environment Setup
 
-Create and activate a conda environment, then install dependencies:
+Create the Conda environment from `environment.yml`:
 
 ```bash
-conda create -n glaze python=3.11 -y
-conda activate glaze
-pip install -r requirements.txt
+conda env create -f environment.yml
+conda activate glz
+```
+
+If the environment already exists, update it:
+
+```bash
+conda env update -f environment.yml --prune
 ```
 
 ## Working with `src/elias`
