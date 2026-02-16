@@ -16,9 +16,12 @@ import pandas as pd
 
 from .constants import SUPPORTED_MODEL_NAMES
 from .continuous_models import _prepare_model_input
+from .data_validation import _validate_required_columns
+from .environment import generate_environment_from_template, objective_h_mean_from_template
 from .likelihood_scoring import (
     _simulate_continuous_trials_for_likelihood,
     _simulate_ddm_trials_for_likelihood,
+    score_model_simulation_likelihood,
 )
 from .optimizer_runner import fit_model_parameters
 from .parameter_space import (
@@ -38,6 +41,11 @@ from .results_store import (
     save_table_csv,
 )
 from .seed_utils import derive_seed, resolve_worker_count
+from .subjective_h import (
+    attach_subjective_h_from_train,
+    build_normative_belief_columns,
+    fit_blockwise_subjective_h_choice_only,
+)
 
 
 STEP3_PIPELINE_NAME = "step3"
@@ -70,6 +78,7 @@ _DEFAULT_STEP3_PIPELINE_CONFIG: dict[str, object] = {
     "fit_n_starts": 4,
     "fit_n_iterations": 8,
     "fit_n_sims_per_trial": 150,
+    "fit_objective": "choice_only",
     "dt_ms": 1.0,
     "max_duration_ms": 5000.0,
     "random_seed": 0,
@@ -79,6 +88,7 @@ _DEFAULT_STEP3_PIPELINE_CONFIG: dict[str, object] = {
     "use_block_sidecar_params": True,
     "max_timeout_fallback_rate": 0.20,
     "max_timeout_resample_retries": 5,
+    "surrogate_subjective_h_global": None,
 }
 
 
@@ -110,6 +120,10 @@ def _build_surrogate_config(
 
     if int(merged["n_draws_per_trial"]) <= 0:
         raise ValueError("n_draws_per_trial must be > 0.")
+    if merged.get("surrogate_subjective_h_global", None) is not None:
+        h_value = float(merged["surrogate_subjective_h_global"])
+        if not (0.0 < h_value < 1.0):
+            raise ValueError("surrogate_subjective_h_global must be in (0, 1) when provided.")
 
     fixed_params = merged.get("fixed_model_params", {})
     if not isinstance(fixed_params, dict):
@@ -126,6 +140,7 @@ def build_step3_pipeline_config(
     fit_n_starts: int = 4,
     fit_n_iterations: int = 8,
     fit_n_sims_per_trial: int = 150,
+    fit_objective: str = "choice_only",
     dt_ms: float = 1.0,
     max_duration_ms: float = 5000.0,
     random_seed: int = 0,
@@ -135,6 +150,7 @@ def build_step3_pipeline_config(
     use_block_sidecar_params: bool = True,
     max_timeout_fallback_rate: float = 0.20,
     max_timeout_resample_retries: int = 5,
+    surrogate_subjective_h_global: float | None = None,
 ) -> dict[str, object]:
     """Build one canonical Step 3 pipeline config without notebook-specific split keys."""
     cfg = {
@@ -144,6 +160,7 @@ def build_step3_pipeline_config(
         "fit_n_starts": int(fit_n_starts),
         "fit_n_iterations": int(fit_n_iterations),
         "fit_n_sims_per_trial": int(fit_n_sims_per_trial),
+        "fit_objective": str(fit_objective),
         "dt_ms": float(dt_ms),
         "max_duration_ms": float(max_duration_ms),
         "random_seed": int(random_seed),
@@ -153,6 +170,9 @@ def build_step3_pipeline_config(
         "use_block_sidecar_params": bool(use_block_sidecar_params),
         "max_timeout_fallback_rate": float(max_timeout_fallback_rate),
         "max_timeout_resample_retries": int(max_timeout_resample_retries),
+        "surrogate_subjective_h_global": (
+            None if surrogate_subjective_h_global is None else float(surrogate_subjective_h_global)
+        ),
     }
 
     if cfg["n_surrogates_per_model"] <= 0:
@@ -165,6 +185,8 @@ def build_step3_pipeline_config(
         raise ValueError("fit_n_iterations must be >= 0.")
     if cfg["fit_n_sims_per_trial"] <= 0:
         raise ValueError("fit_n_sims_per_trial must be > 0.")
+    if cfg["fit_objective"] not in {"choice_only", "joint"}:
+        raise ValueError("fit_objective must be one of {'choice_only', 'joint'}.")
     if cfg["dt_ms"] <= 0.0:
         raise ValueError("dt_ms must be > 0.")
     if cfg["max_duration_ms"] <= 0.0:
@@ -179,6 +201,10 @@ def build_step3_pipeline_config(
         raise ValueError("max_timeout_fallback_rate must be in [0, 1].")
     if cfg["max_timeout_resample_retries"] < 0:
         raise ValueError("max_timeout_resample_retries must be >= 0.")
+    if cfg["surrogate_subjective_h_global"] is not None:
+        h_value = float(cfg["surrogate_subjective_h_global"])
+        if not (0.0 < h_value < 1.0):
+            raise ValueError("surrogate_subjective_h_global must be in (0, 1) when provided.")
 
     return cfg
 
@@ -193,6 +219,7 @@ def _normalize_step3_pipeline_config(config: dict[str, object]) -> dict[str, obj
         fit_n_starts=int(merged["fit_n_starts"]),
         fit_n_iterations=int(merged["fit_n_iterations"]),
         fit_n_sims_per_trial=int(merged["fit_n_sims_per_trial"]),
+        fit_objective=str(merged["fit_objective"]),
         dt_ms=float(merged["dt_ms"]),
         max_duration_ms=float(merged["max_duration_ms"]),
         random_seed=int(merged["random_seed"]),
@@ -202,6 +229,7 @@ def _normalize_step3_pipeline_config(config: dict[str, object]) -> dict[str, obj
         use_block_sidecar_params=bool(merged["use_block_sidecar_params"]),
         max_timeout_fallback_rate=float(merged["max_timeout_fallback_rate"]),
         max_timeout_resample_retries=int(merged["max_timeout_resample_retries"]),
+        surrogate_subjective_h_global=merged["surrogate_subjective_h_global"],
     )
 
 
@@ -210,6 +238,7 @@ def _fit_config_from_step3_config(config: dict[str, object]) -> dict[str, object
         "n_starts": int(config["fit_n_starts"]),
         "n_iterations": int(config["fit_n_iterations"]),
         "n_sims_per_trial": int(config["fit_n_sims_per_trial"]),
+        "fit_objective": str(config["fit_objective"]),
         "fixed_model_params": {
             "dt_ms": float(config["dt_ms"]),
             "max_duration_ms": float(config["max_duration_ms"]),
@@ -221,6 +250,7 @@ def _fit_config_from_step3_config(config: dict[str, object]) -> dict[str, object
 def _surrogate_config_from_step3_config(config: dict[str, object]) -> dict[str, object]:
     return {
         "n_draws_per_trial": int(config["surrogate_n_draws_per_trial"]),
+        "surrogate_subjective_h_global": config.get("surrogate_subjective_h_global"),
         "fixed_model_params": {
             "dt_ms": float(config["dt_ms"]),
             "max_duration_ms": float(config["max_duration_ms"]),
@@ -351,6 +381,9 @@ def simulate_surrogate_dataset(
     random_seed: int,
     surrogate_id: str,
     surrogate_config: dict[str, object] | None = None,
+    *,
+    environment_df: pd.DataFrame | None = None,
+    generating_subjective_h: float | None = None,
 ) -> pd.DataFrame:
     """Simulate one surrogate dataset from a generating model and pseudo-true theta."""
     model_name_str = str(model_name)
@@ -361,7 +394,53 @@ def simulate_surrogate_dataset(
         )
 
     config = _build_surrogate_config(surrogate_config)
-    model_df = _prepare_model_input(df_template)
+    seed_value = int(random_seed)
+
+    # Legacy generation path (kept commented for traceability):
+    # model_df = _prepare_model_input(df_template)
+    # Why replaced:
+    # The old implementation let the generating model consume observed template
+    # trial signals directly. The refactor separates objective environment
+    # generation from agent simulation.
+    if environment_df is None:
+        env_df = generate_environment_from_template(
+            df_template,
+            random_seed=seed_value + 101,
+        )
+    else:
+        env_df = environment_df.copy()
+
+    if generating_subjective_h is None:
+        h_cfg = config.get("surrogate_subjective_h_global", None)
+        if h_cfg is None:
+            generating_subjective_h = objective_h_mean_from_template(
+                env_df,
+                objective_h_col="hazard_rate",
+            )
+        else:
+            generating_subjective_h = float(h_cfg)
+    generating_subjective_h = float(np.clip(float(generating_subjective_h), 1e-6, 1.0 - 1e-6))
+
+    env_df["H"] = float(generating_subjective_h)
+    env_df = build_normative_belief_columns(
+        env_df,
+        participant_col="participant_id",
+        block_col="block_id",
+        trial_col="trial_index",
+        llr_col="LLR",
+        hazard_col="H",
+        output_prev_col="prev_normative_belief_L",
+        output_curr_col="normative_belief_L",
+        output_psi_col="psi_t",
+    )
+    # Threshold fallbacks consume this column when explicit sidecar parameters
+    # are not used.
+    env_df["belief_L"] = pd.to_numeric(
+        env_df.get("normative_belief_L", env_df.get("belief_L", 0.0)),
+        errors="coerce",
+    ).fillna(0.0)
+
+    model_df = _prepare_model_input(env_df)
     model_params = theta_to_scoring_model_params(model_name_str, np.asarray(theta, dtype=float))
     fixed_params = dict(config["fixed_model_params"])
     fixed_params.update(model_params)
@@ -373,7 +452,6 @@ def simulate_surrogate_dataset(
         )
 
     n_draws_per_trial = int(config["n_draws_per_trial"])
-    seed_value = int(random_seed)
 
     if model_name_str in ("cont_threshold", "cont_asymptote"):
         decisions_by_trial, rts_by_trial = _simulate_continuous_trials_for_likelihood(
@@ -425,6 +503,10 @@ def simulate_surrogate_dataset(
     surrogate_df["generating_model_name"] = model_name_str
     surrogate_df["generating_seed"] = int(seed_value)
     surrogate_df["timeout_fallback_count"] = int(timeout_fallback_count)
+    surrogate_df["generating_subjective_h"] = float(generating_subjective_h)
+    surrogate_df["objective_h_mean"] = float(
+        objective_h_mean_from_template(surrogate_df, objective_h_col="hazard_rate")
+    )
 
     return surrogate_df
 
@@ -448,6 +530,51 @@ def fit_models_on_surrogate(
         else "unknown_generator"
     )
 
+    work_df = df_surrogate.copy()
+    if "split" not in work_df.columns:
+        # Keep compatibility with synthetic inputs lacking split labels.
+        work_df["split"] = "TRAIN"
+    work_df["participant_id"] = work_df["participant_id"].astype(str)
+    work_df["split"] = work_df["split"].astype(str)
+
+    subjective_h_table = fit_blockwise_subjective_h_choice_only(
+        work_df,
+        participant_col="participant_id",
+        block_col="block_id",
+        trial_col="trial_index",
+        split_col="split",
+        train_label="TRAIN",
+        llr_col="LLR",
+        choice_col="choice",
+        beta=1.0,
+    )
+    with_h = attach_subjective_h_from_train(
+        work_df,
+        subjective_h_table,
+        participant_col="participant_id",
+        block_col="block_id",
+        fitted_h_col="fitted_subjective_h",
+        output_h_col="H",
+    )
+    with_state = build_normative_belief_columns(
+        with_h,
+        participant_col="participant_id",
+        block_col="block_id",
+        trial_col="trial_index",
+        llr_col="LLR",
+        hazard_col="H",
+        output_prev_col="prev_normative_belief_L",
+        output_curr_col="normative_belief_L",
+        output_psi_col="psi_t",
+    )
+    model_ready_df = _prepare_model_input(with_state)
+    train_df = model_ready_df[model_ready_df["split"] == "TRAIN"].copy()
+    test_df = model_ready_df[model_ready_df["split"] == "TEST"].copy()
+    if train_df.empty:
+        raise ValueError("Surrogate fit requires TRAIN rows.")
+    if test_df.empty:
+        test_df = train_df.copy()
+
     rows: list[dict[str, object]] = []
     for candidate_model in models:
         # Seed derivation is key-based (not loop-index based) so run order and
@@ -460,24 +587,47 @@ def fit_models_on_surrogate(
             "fit_candidate",
         )
         fit_output = fit_model_parameters(
-            df=df_surrogate,
+            df=train_df,
             model_name=candidate_model,
             fit_config=fit_config,
             random_seed=seed_value,
         )
+        best_model_params = dict(fit_output["best_model_params"])
+        score_output = score_model_simulation_likelihood(
+            test_df,
+            model_name=str(candidate_model),
+            model_params=best_model_params,
+            n_sims_per_trial=int(fit_config.get("n_sims_per_trial", 150))
+            if fit_config
+            else 150,
+            rt_bin_width_ms=float(fit_config.get("rt_bin_width_ms", 20.0))
+            if fit_config
+            else 20.0,
+            rt_max_ms=float(fit_config.get("rt_max_ms", 5000.0))
+            if fit_config
+            else 5000.0,
+            eps=float(fit_config.get("eps", 1e-12)) if fit_config else 1e-12,
+            random_seed=int(seed_value + 17),
+        )
+        test_aggregate = dict(score_output["aggregate_scores"])
 
-        n_trials = int(len(df_surrogate))
+        n_trials = int(test_aggregate["n_trials"])
         n_params = int(fit_output["n_parameters"])
-        bic_value = float(2.0 * fit_output["best_joint_score"] + n_params * np.log(max(n_trials, 1)))
+        bic_value = float(
+            2.0 * float(test_aggregate["joint_score"])
+            + n_params * np.log(max(n_trials, 1))
+        )
 
         rows.append(
             {
                 "surrogate_id": surrogate_id,
                 "generating_model_name": generating_model_name,
                 "candidate_model_name": str(candidate_model),
-                "joint_score": float(fit_output["best_joint_score"]),
-                "choice_only_score": float(fit_output["best_choice_only_score"]),
-                "rt_only_cond_score": float(fit_output["best_rt_only_cond_score"]),
+                "fit_objective": str(fit_output["fit_objective"]),
+                "fit_objective_score_train": float(fit_output["best_fit_objective_score"]),
+                "joint_score": float(test_aggregate["joint_score"]),
+                "choice_only_score": float(test_aggregate["choice_only_score"]),
+                "rt_only_cond_score": float(test_aggregate["rt_only_cond_score"]),
                 "bic_score": bic_value,
                 "n_trials": n_trials,
                 "n_params": n_params,
@@ -485,6 +635,7 @@ def fit_models_on_surrogate(
                 "best_theta": np.asarray(fit_output["best_theta"], dtype=float),
                 "best_eta": np.asarray(fit_output["best_eta"], dtype=float),
                 "best_named_params": dict(fit_output["best_named_params"]),
+                "best_model_params": best_model_params,
             }
         )
 
@@ -507,6 +658,7 @@ def _run_step3_surrogate_task(task_payload: dict[str, Any]) -> dict[str, Any]:
     candidate_models = tuple(task_payload["candidate_models"])
     max_timeout_fallback_rate = float(task_payload["max_timeout_fallback_rate"])
     max_timeout_resample_retries = int(task_payload["max_timeout_resample_retries"])
+    surrogate_subjective_h_global = surrogate_config.get("surrogate_subjective_h_global", None)
 
     best_candidate: dict[str, Any] | None = None
     timeout_guard_triggered = False
@@ -528,6 +680,14 @@ def _run_step3_surrogate_task(task_payload: dict[str, Any]) -> dict[str, Any]:
             "simulation",
             attempt_index,
         )
+        environment_seed = derive_seed(
+            base_seed,
+            run_id,
+            generating_model,
+            sample_index,
+            "environment",
+            attempt_index,
+        )
 
         theta_df = sample_pseudo_true_thetas(
             generating_model,
@@ -537,6 +697,18 @@ def _run_step3_surrogate_task(task_payload: dict[str, Any]) -> dict[str, Any]:
         theta_vector = np.asarray(theta_df.iloc[0]["theta_vector"], dtype=float)
         eta_vector = np.asarray(theta_df.iloc[0]["eta_vector"], dtype=float)
 
+        environment_df = generate_environment_from_template(
+            model_df,
+            random_seed=int(environment_seed),
+        )
+        if surrogate_subjective_h_global is None:
+            generating_subjective_h = objective_h_mean_from_template(
+                environment_df,
+                objective_h_col="hazard_rate",
+            )
+        else:
+            generating_subjective_h = float(surrogate_subjective_h_global)
+
         surrogate_df = simulate_surrogate_dataset(
             df_template=model_df,
             model_name=generating_model,
@@ -544,6 +716,8 @@ def _run_step3_surrogate_task(task_payload: dict[str, Any]) -> dict[str, Any]:
             random_seed=int(simulation_seed),
             surrogate_id=surrogate_id,
             surrogate_config=surrogate_config,
+            environment_df=environment_df,
+            generating_subjective_h=float(generating_subjective_h),
         )
         surrogate_df["sample_index"] = int(sample_index)
 
@@ -555,11 +729,16 @@ def _run_step3_surrogate_task(task_payload: dict[str, Any]) -> dict[str, Any]:
             "attempt_index": int(attempt_index),
             "sampling_seed": int(sampling_seed),
             "simulation_seed": int(simulation_seed),
+            "environment_seed": int(environment_seed),
             "theta_vector": theta_vector,
             "eta_vector": eta_vector,
             "surrogate_df": surrogate_df,
             "timeout_fallback_count": int(timeout_fallback_count),
             "timeout_fallback_rate": float(timeout_fallback_rate),
+            "generating_subjective_h": float(generating_subjective_h),
+            "objective_h_mean": float(
+                objective_h_mean_from_template(environment_df, objective_h_col="hazard_rate")
+            ),
         }
         if (
             best_candidate is None
@@ -598,7 +777,10 @@ def _run_step3_surrogate_task(task_payload: dict[str, Any]) -> dict[str, Any]:
         "eta_vector": np.asarray(best_candidate["eta_vector"], dtype=float),
         "sampling_seed": int(best_candidate["sampling_seed"]),
         "simulation_seed": int(best_candidate["simulation_seed"]),
+        "environment_seed": int(best_candidate["environment_seed"]),
         "fitting_seed": int(fitting_seed),
+        "generating_subjective_h": float(best_candidate["generating_subjective_h"]),
+        "objective_h_mean": float(best_candidate["objective_h_mean"]),
     }
     spec = get_parameter_spec(generating_model)
     theta_vec = np.asarray(best_candidate["theta_vector"], dtype=float)
@@ -617,6 +799,8 @@ def _run_step3_surrogate_task(task_payload: dict[str, Any]) -> dict[str, Any]:
         "timeout_fallback_rate": float(best_candidate["timeout_fallback_rate"]),
         "timeout_guard_triggered": bool(timeout_guard_triggered),
         "timeout_guard_attempts": int(best_attempt_index + 1),
+        "generating_subjective_h": float(best_candidate["generating_subjective_h"]),
+        "objective_h_mean": float(best_candidate["objective_h_mean"]),
         "timeout_guard_exhausted": bool(
             timeout_guard_triggered
             and float(best_candidate["timeout_fallback_rate"]) > max_timeout_fallback_rate
@@ -921,7 +1105,35 @@ def run_step3_pipeline(
 
     config_path = save_json(normalized_config, paths["run_dir"] / "config.json")
 
-    model_df = _prepare_model_input(df_template)
+    _validate_required_columns(
+        df_template,
+        (
+            "row_id",
+            "participant_id",
+            "block_id",
+            "trial_index",
+            "split",
+            "hazard_rate",
+            "noise_sigma",
+            "LLR",
+            "choice",
+            "reaction_time_ms",
+            "belief_L",
+        ),
+        context="Step 3 template input",
+    )
+    model_df = df_template.copy()
+    model_df["participant_id"] = model_df["participant_id"].astype(str)
+    model_df["split"] = model_df["split"].astype(str)
+    model_df = model_df.sort_values(
+        ["participant_id", "block_id", "trial_index"],
+        kind="mergesort",
+    ).reset_index(drop=True)
+    present_splits = set(model_df["split"].unique().tolist())
+    if not {"TRAIN", "TEST"}.issubset(present_splits):
+        raise ValueError(
+            f"Step 3 requires TRAIN/TEST split labels in template. Found: {sorted(present_splits)}"
+        )
     candidate_models = tuple(normalized_config["candidate_models"])
 
     pseudo_rows: list[dict[str, object]] = []
@@ -1203,6 +1415,8 @@ def run_surrogate_recovery(
             cfg["fit_n_iterations"] = int(fit_config["n_iterations"])
         if "n_sims_per_trial" in fit_config:
             cfg["fit_n_sims_per_trial"] = int(fit_config["n_sims_per_trial"])
+        if "fit_objective" in fit_config:
+            cfg["fit_objective"] = str(fit_config["fit_objective"])
         fixed = fit_config.get("fixed_model_params", {})
         if isinstance(fixed, dict):
             if "dt_ms" in fixed:
@@ -1213,6 +1427,12 @@ def run_surrogate_recovery(
     if surrogate_config is not None:
         if "n_draws_per_trial" in surrogate_config:
             cfg["surrogate_n_draws_per_trial"] = int(surrogate_config["n_draws_per_trial"])
+        if "surrogate_subjective_h_global" in surrogate_config:
+            cfg["surrogate_subjective_h_global"] = (
+                None
+                if surrogate_config["surrogate_subjective_h_global"] is None
+                else float(surrogate_config["surrogate_subjective_h_global"])
+            )
         fixed = surrogate_config.get("fixed_model_params", {})
         if isinstance(fixed, dict):
             if "dt_ms" in fixed:

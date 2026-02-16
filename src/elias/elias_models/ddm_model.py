@@ -94,7 +94,10 @@ def run_model_c_ddm(
 
     for row in model_df.itertuples(index=False):
         # psi_t carries the prior-belief term from the normative update.
-        psi_t = float(psi_function(float(row.prev_observed_belief_L), float(row.H)))
+        # Legacy input (kept commented for traceability):
+        # psi_t = float(psi_function(float(row.prev_observed_belief_L), float(row.H)))
+        # Replaced because priors now come from internal normative recursion.
+        psi_t = float(psi_function(float(row.prev_normative_belief_L), float(row.H)))
         # start_k controls how strongly prior belief moves the starting point.
         z_t = _sigmoid(float(start_k) * psi_t)
         z_t = float(np.clip(z_t, EPSILON, 1.0 - EPSILON))
@@ -143,7 +146,7 @@ def run_model_c_ddm(
             "belief_L": float(row.belief_L),
             "LLR": float(row.LLR),
             "H": float(row.H),
-            "prev_observed_belief_L": float(row.prev_observed_belief_L),
+            "prev_normative_belief_L": float(row.prev_normative_belief_L),
             "used_threshold": np.nan,
             "predicted_decision": int(predicted_decision),
             "predicted_rt_ms": float(np.median(rts_ms)),

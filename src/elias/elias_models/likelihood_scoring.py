@@ -122,7 +122,10 @@ def _simulate_continuous_trials_for_likelihood(
             # Simulate a response distribution for the single observed trial.
             for sample_idx in range(n_sims_per_trial):
                 sim_result = simulate_trial(
-                    prev_belief_L=float(row.prev_observed_belief_L),
+                    # Legacy input retained as comment for auditability:
+                    # prev_belief_L=float(row.prev_observed_belief_L),
+                    # Active path uses internally reconstructed normative prior.
+                    prev_belief_L=float(row.prev_normative_belief_L),
                     current_LLR=float(row.LLR),
                     H=float(row.H),
                     belief_threshold=float(row.used_threshold),
@@ -175,7 +178,9 @@ def _simulate_ddm_trials_for_likelihood(
     for row in model_df.itertuples(index=False):
         # Deterministic trial-specific transforms from observed inputs to
         # DDM controls (start bias z_t and drift v_t).
-        psi_t = float(psi_function(float(row.prev_observed_belief_L), float(row.H)))
+        # Legacy input retained as comment for auditability:
+        # psi_t = float(psi_function(float(row.prev_observed_belief_L), float(row.H)))
+        psi_t = float(psi_function(float(row.prev_normative_belief_L), float(row.H)))
         z_t = _sigmoid(float(start_k) * psi_t)
         z_t = float(np.clip(z_t, EPSILON, 1.0 - EPSILON))
         v_t = float(llr_to_drift_scale) * float(row.LLR)

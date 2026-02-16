@@ -20,6 +20,11 @@ from .continuous_models import _prepare_model_input
 from .data_validation import _validate_required_columns
 from .likelihood_scoring import score_model_simulation_likelihood
 from .optimizer_runner import fit_model_parameters
+from .subjective_h import (
+    attach_subjective_h_from_train,
+    build_normative_belief_columns,
+    fit_blockwise_subjective_h_choice_only,
+)
 from .results_store import (
     build_basic_manifest,
     load_json,
@@ -36,6 +41,7 @@ from .winner_rules import apply_step4_winner_rules
 
 STEP4_PIPELINE_NAME = "step4"
 _STEP4_TABLE_NAMES: tuple[str, ...] = (
+    "participant_subjective_h_train",
     "participant_model_fits_train",
     "participant_model_scores_test",
     "participant_model_scores_test_blockwise",
@@ -56,6 +62,7 @@ _DEFAULT_STEP4_PIPELINE_CONFIG: dict[str, object] = {
     "dt_ms": 1.0,
     "max_duration_ms": 5000.0,
     "random_seed": 0,
+    "fit_objective": "choice_only",
     "winner_primary_score_column": "joint_score",
     "winner_tie_tolerance": 1e-9,
     "workers": 1,
@@ -90,6 +97,7 @@ def build_step4_pipeline_config(
     dt_ms: float = 1.0,
     max_duration_ms: float = 5000.0,
     random_seed: int = 0,
+    fit_objective: str = "choice_only",
     winner_primary_score_column: str = "joint_score",
     winner_tie_tolerance: float = 1e-9,
     workers: int = 1,
@@ -109,6 +117,7 @@ def build_step4_pipeline_config(
         dt_ms: Simulation integration step in milliseconds.
         max_duration_ms: Maximum simulation duration in milliseconds.
         random_seed: Base deterministic seed.
+        fit_objective: Optimizer objective for TRAIN fit (`choice_only` or `joint`).
         winner_primary_score_column: Score column for winner selection.
         winner_tie_tolerance: Tie tolerance for winner selection.
 
@@ -127,6 +136,7 @@ def build_step4_pipeline_config(
         "dt_ms": float(dt_ms),
         "max_duration_ms": float(max_duration_ms),
         "random_seed": int(random_seed),
+        "fit_objective": str(fit_objective),
         "winner_primary_score_column": str(winner_primary_score_column),
         "winner_tie_tolerance": float(winner_tie_tolerance),
         "workers": int(workers),
@@ -151,6 +161,8 @@ def build_step4_pipeline_config(
         raise ValueError("dt_ms must be > 0.")
     if cfg["max_duration_ms"] <= 0.0:
         raise ValueError("max_duration_ms must be > 0.")
+    if cfg["fit_objective"] not in {"choice_only", "joint"}:
+        raise ValueError("fit_objective must be one of {'choice_only', 'joint'}.")
     if cfg["winner_primary_score_column"] not in {"joint_score", "choice_only_score", "rt_only_cond_score", "bic_score"}:
         raise ValueError(
             "winner_primary_score_column must be one of "
@@ -179,6 +191,7 @@ def _normalize_step4_pipeline_config(config: dict[str, object]) -> dict[str, obj
         dt_ms=float(merged["dt_ms"]),
         max_duration_ms=float(merged["max_duration_ms"]),
         random_seed=int(merged["random_seed"]),
+        fit_objective=str(merged["fit_objective"]),
         winner_primary_score_column=str(merged["winner_primary_score_column"]),
         winner_tie_tolerance=float(merged["winner_tie_tolerance"]),
         workers=int(merged["workers"]),
@@ -200,6 +213,7 @@ def _fit_config_from_step4_config(config: dict[str, object]) -> dict[str, object
             "max_duration_ms": float(config["max_duration_ms"]),
             "use_block_sidecar_params": bool(config["use_block_sidecar_params"]),
         },
+        "fit_objective": str(config["fit_objective"]),
     }
 
 
@@ -282,6 +296,13 @@ def _run_step4_participant_task(task_payload: dict[str, Any]) -> dict[str, Any]:
     run_id = str(task_payload["run_id"])
     base_seed = int(task_payload["base_seed"])
 
+    participant_df["participant_id"] = participant_df["participant_id"].astype(str)
+    participant_df["split"] = participant_df["split"].astype(str)
+    participant_df = participant_df.sort_values(
+        ["participant_id", "block_id", "trial_index"],
+        kind="mergesort",
+    ).reset_index(drop=True)
+
     train_df = participant_df[participant_df["split"] == "TRAIN"].copy()
     test_df = participant_df[participant_df["split"] == "TEST"].copy()
     if train_df.empty or test_df.empty:
@@ -290,6 +311,44 @@ def _run_step4_participant_task(task_payload: dict[str, Any]) -> dict[str, Any]:
             f"Found TRAIN={len(train_df)}, TEST={len(test_df)}."
         )
 
+    # Fit subjective H once from TRAIN choices and share it across all models.
+    subjective_h_table = fit_blockwise_subjective_h_choice_only(
+        participant_df,
+        participant_col="participant_id",
+        block_col="block_id",
+        trial_col="trial_index",
+        split_col="split",
+        train_label="TRAIN",
+        llr_col="LLR",
+        choice_col="choice",
+        beta=1.0,
+    )
+    subjective_h_table["participant_id"] = str(participant_id)
+
+    participant_with_h = attach_subjective_h_from_train(
+        participant_df,
+        subjective_h_table,
+        participant_col="participant_id",
+        block_col="block_id",
+        fitted_h_col="fitted_subjective_h",
+        output_h_col="H",
+    )
+    participant_with_state = build_normative_belief_columns(
+        participant_with_h,
+        participant_col="participant_id",
+        block_col="block_id",
+        trial_col="trial_index",
+        llr_col="LLR",
+        hazard_col="H",
+        output_prev_col="prev_normative_belief_L",
+        output_curr_col="normative_belief_L",
+        output_psi_col="psi_t",
+    )
+    participant_model_df = _prepare_model_input(participant_with_state)
+    train_df = participant_model_df[participant_model_df["split"] == "TRAIN"].copy()
+    test_df = participant_model_df[participant_model_df["split"] == "TEST"].copy()
+
+    subjective_h_rows = subjective_h_table.to_dict(orient="records")
     fit_rows: list[dict[str, Any]] = []
     test_score_rows: list[dict[str, Any]] = []
     test_block_score_rows: list[dict[str, Any]] = []
@@ -324,6 +383,10 @@ def _run_step4_participant_task(task_payload: dict[str, Any]) -> dict[str, Any]:
                 "n_evaluations": int(fit_output["n_evaluations"]),
                 "fit_n_starts": int(fit_output["n_starts"]),
                 "fit_n_iterations": int(fit_output["n_iterations"]),
+                "fit_objective": str(fit_output["fit_objective"]),
+                "best_fit_objective_score_train": float(
+                    fit_output["best_fit_objective_score"]
+                ),
                 "best_joint_score_train": float(fit_output["best_joint_score"]),
                 "best_choice_only_score_train": float(fit_output["best_choice_only_score"]),
                 "best_rt_only_cond_score_train": float(fit_output["best_rt_only_cond_score"]),
@@ -416,6 +479,7 @@ def _run_step4_participant_task(task_payload: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "participant_id": str(participant_id),
+        "subjective_h_rows": subjective_h_rows,
         "fit_rows": fit_rows,
         "test_score_rows": test_score_rows,
         "test_block_score_rows": test_block_score_rows,
@@ -444,7 +508,17 @@ def run_step4_pipeline(
     """
     _validate_required_columns(
         df_all,
-        ("participant_id", "block_id", "trial_index", "split", "choice", "reaction_time_ms"),
+        (
+            "row_id",
+            "participant_id",
+            "block_id",
+            "trial_index",
+            "split",
+            "LLR",
+            "belief_L",
+            "choice",
+            "reaction_time_ms",
+        ),
         context="Step 4 pipeline input",
     )
     normalized_config = _normalize_step4_pipeline_config(config)
@@ -458,7 +532,7 @@ def run_step4_pipeline(
     )
     config_path = save_json(normalized_config, paths["run_dir"] / "config.json")
 
-    model_df = _prepare_model_input(df_all)
+    model_df = df_all.copy()
     model_df["participant_id"] = model_df["participant_id"].astype(str)
     model_df["split"] = model_df["split"].astype(str)
 
@@ -475,6 +549,7 @@ def run_step4_pipeline(
     fit_config = _fit_config_from_step4_config(normalized_config)
 
     fit_rows: list[dict[str, Any]] = []
+    subjective_h_rows: list[dict[str, Any]] = []
     test_score_rows: list[dict[str, Any]] = []
     test_block_score_rows: list[dict[str, Any]] = []
 
@@ -501,10 +576,12 @@ def run_step4_pipeline(
             participant_results = list(executor.map(_run_step4_participant_task, participant_tasks))
 
     for participant_result in participant_results:
+        subjective_h_rows.extend(participant_result["subjective_h_rows"])
         fit_rows.extend(participant_result["fit_rows"])
         test_score_rows.extend(participant_result["test_score_rows"])
         test_block_score_rows.extend(participant_result["test_block_score_rows"])
 
+    participant_subjective_h_train = pd.DataFrame(subjective_h_rows)
     participant_model_fits_train = pd.DataFrame(fit_rows)
     participant_model_scores_test = pd.DataFrame(test_score_rows)
     participant_model_scores_test_blockwise = pd.DataFrame(test_block_score_rows)
@@ -517,6 +594,7 @@ def run_step4_pipeline(
     )
 
     tables: dict[str, pd.DataFrame] = {
+        "participant_subjective_h_train": participant_subjective_h_train,
         "participant_model_fits_train": participant_model_fits_train,
         "participant_model_scores_test": participant_model_scores_test,
         "participant_model_scores_test_blockwise": participant_model_scores_test_blockwise,
@@ -537,6 +615,7 @@ def run_step4_pipeline(
     manifest_extra = {
         "n_participants": int(len(participant_ids)),
         "n_candidate_models": int(len(candidate_models)),
+        "n_subjective_h_rows": int(len(participant_subjective_h_train)),
         "n_fit_rows": int(len(participant_model_fits_train)),
         "n_test_score_rows": int(len(participant_model_scores_test)),
         "n_block_score_rows": int(len(participant_model_scores_test_blockwise)),
@@ -634,6 +713,7 @@ def list_step4_runs(
                 "created_at_utc",
                 "status",
                 "n_participants",
+                "n_subjective_h_rows",
                 "n_fit_rows",
                 "group_winner_model_name",
                 "run_dir",
@@ -652,6 +732,7 @@ def list_step4_runs(
                 "created_at_utc": manifest.get("created_at_utc", ""),
                 "status": manifest.get("status", "unknown"),
                 "n_participants": manifest.get("n_participants", np.nan),
+                "n_subjective_h_rows": manifest.get("n_subjective_h_rows", np.nan),
                 "n_fit_rows": manifest.get("n_fit_rows", np.nan),
                 "group_winner_model_name": manifest.get("group_winner_model_name", ""),
                 "run_dir": str(run_dir),

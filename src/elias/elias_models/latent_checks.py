@@ -39,7 +39,7 @@ _HAZARD_TRIAL_COLUMNS: tuple[str, ...] = (
     "is_choice_correct",
     "reaction_time_ms",
     "H",
-    "prev_observed_belief_L",
+    "prev_normative_belief_L",
     "psi_t",
     "abs_prev_belief_L",
     "abs_psi_t",
@@ -174,7 +174,7 @@ def run_change_hazard_checks(
             "correct_side",
             "reaction_time_ms",
             "H",
-            "prev_observed_belief_L",
+            "prev_normative_belief_L",
         ),
         context="Step 5 hazard-signature input",
     )
@@ -208,12 +208,12 @@ def run_change_hazard_checks(
     test_df["psi_t"] = [
         float(psi_function(float(prev_l), float(h_value)))
         for prev_l, h_value in zip(
-            test_df["prev_observed_belief_L"].to_numpy(dtype=float),
+            test_df["prev_normative_belief_L"].to_numpy(dtype=float),
             test_df["H"].to_numpy(dtype=float),
             strict=True,
         )
     ]
-    test_df["abs_prev_belief_L"] = test_df["prev_observed_belief_L"].abs()
+    test_df["abs_prev_belief_L"] = test_df["prev_normative_belief_L"].abs()
     test_df["abs_psi_t"] = test_df["psi_t"].abs()
     test_df["psi_shrinkage_abs"] = test_df["abs_prev_belief_L"] - test_df["abs_psi_t"]
     test_df["is_choice_correct"] = (

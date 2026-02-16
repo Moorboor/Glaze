@@ -48,7 +48,7 @@ def _prepare_model_input(df: pd.DataFrame) -> pd.DataFrame:
             "choice",
             "reaction_time_ms",
             "belief_L",
-            "prev_observed_belief_L",
+            "prev_normative_belief_L",
         ],
     )
     model_df = _drop_non_finite_rows(
@@ -62,7 +62,7 @@ def _prepare_model_input(df: pd.DataFrame) -> pd.DataFrame:
             "choice",
             "reaction_time_ms",
             "belief_L",
-            "prev_observed_belief_L",
+            "prev_normative_belief_L",
         ],
         context="model simulation",
     )
@@ -126,8 +126,13 @@ def _attach_thresholds(
             if out["used_threshold"].notna().any():
                 # Fill any missing blocks with default mode-derived thresholds to keep
                 # behavior robust when sidecar maps are partial.
+                threshold_source_col = (
+                    "normative_belief_L"
+                    if "normative_belief_L" in df.columns
+                    else "belief_L"
+                )
                 default_thresholds = (
-                    df.groupby(["participant_id", "block_id"], sort=False)["belief_L"]
+                    df.groupby(["participant_id", "block_id"], sort=False)[threshold_source_col]
                     .agg(lambda x: max(float(np.mean(np.abs(x))), EPSILON))
                     .rename("default_threshold")
                     .reset_index()
@@ -139,11 +144,21 @@ def _attach_thresholds(
                 out = out.drop(columns=["default_threshold"])
                 return out
 
-    # For the currently supported mode, threshold is estimated from observed
-    # belief magnitude per participant/block and reused for all trials in block.
+    # Legacy threshold source (kept for context):
+    # thresholds = (
+    #     df.groupby([\"participant_id\", \"block_id\"], sort=False)[\"belief_L\"]
+    #     .agg(lambda x: max(float(np.mean(np.abs(x))), EPSILON))
+    #     .rename(\"used_threshold\")
+    #     .reset_index()
+    # )
+    # Why replaced:
+    # The old pipeline used observed belief trajectories as model input. The
+    # refactor uses internal normative beliefs, so threshold fallback now first
+    # prefers `normative_belief_L` and only uses observed belief as legacy backup.
+    threshold_source_col = "normative_belief_L" if "normative_belief_L" in df.columns else "belief_L"
     thresholds = (
-        df.groupby(["participant_id", "block_id"], sort=False)["belief_L"]
-        .agg(lambda x: max(float(np.mean(np.abs(x))), EPSILON))
+        df.groupby(["participant_id", "block_id"], sort=False)[threshold_source_col]
+        .agg(lambda x: max(float(np.mean(np.abs(x))), 1.0))
         .rename("used_threshold")
         .reset_index()
     )
@@ -228,7 +243,11 @@ def _run_continuous_model(
         # variant (`stop_on_sat` differs between A and B).
         for row in model_df.itertuples(index=False):
             sim_result = simulate_trial(
-                prev_belief_L=float(row.prev_observed_belief_L),
+                # Legacy input (commented intentionally for traceability):
+                # prev_belief_L=float(row.prev_observed_belief_L),
+                # Replaced because active state must come from internal
+                # normative recursion, not observed belief trajectory.
+                prev_belief_L=float(row.prev_normative_belief_L),
                 current_LLR=float(row.LLR),
                 H=float(row.H),
                 belief_threshold=float(row.used_threshold),
@@ -253,7 +272,7 @@ def _run_continuous_model(
                     "belief_L": float(row.belief_L),
                     "LLR": float(row.LLR),
                     "H": float(row.H),
-                    "prev_observed_belief_L": float(row.prev_observed_belief_L),
+                    "prev_normative_belief_L": float(row.prev_normative_belief_L),
                     "used_threshold": float(row.used_threshold),
                     "predicted_decision": int(sim_result["decision"]),
                     "predicted_rt_ms": float(sim_result["reaction_time_ms"]),

@@ -9,6 +9,11 @@ import pandas as pd
 from .continuous_models import run_model_a_threshold, run_model_b_asymptote
 from .data_validation import _validate_required_columns
 from .ddm_model import run_model_c_ddm
+from .subjective_h import (
+    attach_subjective_h_from_train,
+    build_normative_belief_columns,
+    fit_blockwise_subjective_h_choice_only,
+)
 
 
 def run_all_models_for_participant(
@@ -31,6 +36,23 @@ def run_all_models_for_participant(
         raise ValueError(
             f"No rows for participant_id='{participant_id_str}'. Available: {available}"
         )
+
+    if "split" not in subset.columns:
+        subset["split"] = "TRAIN"
+    if "H" not in subset.columns or "prev_normative_belief_L" not in subset.columns:
+        h_table = fit_blockwise_subjective_h_choice_only(
+            subset,
+            participant_col="participant_id",
+            block_col="block_id",
+            trial_col="trial_index",
+            split_col="split",
+            train_label="TRAIN",
+            llr_col="LLR",
+            choice_col="choice",
+            beta=1.0,
+        )
+        subset = attach_subjective_h_from_train(subset, h_table)
+        subset = build_normative_belief_columns(subset)
 
     out_a = run_model_a_threshold(subset, random_seed=random_seed)
     out_b = run_model_b_asymptote(subset, random_seed=random_seed)

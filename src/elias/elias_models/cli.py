@@ -49,6 +49,8 @@ def _load_preprocessed_dataset(
     hazard_col: str,
     participant_ids: list[str] | None = None,
 ) -> pd.DataFrame:
+    # Legacy argument retained for CLI backward compatibility only.
+    # Active modeling no longer uses external hazard columns.
     loaded_df = load_participant_data(
         csv_path=csv_path,
         participant_ids=participant_ids,
@@ -71,7 +73,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--run-id", type=str, required=True)
     run_parser.add_argument("--output-root", type=str, default="data/elias")
     run_parser.add_argument("--csv-path", type=str, default="data/participants.csv")
-    run_parser.add_argument("--hazard-col", type=str, default="subjective_h_snapshot")
+    run_parser.add_argument(
+        "--hazard-col",
+        type=str,
+        default="subjective_h_snapshot",
+        help="Deprecated compatibility argument; ignored by active internal-H flow.",
+    )
     run_parser.add_argument(
         "--candidate-models",
         type=str,
@@ -83,11 +90,23 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--fit-n-starts", type=int, default=4)
     run_parser.add_argument("--fit-n-iterations", type=int, default=8)
     run_parser.add_argument("--fit-n-sims-per-trial", type=int, default=150)
+    run_parser.add_argument(
+        "--fit-objective",
+        type=str,
+        default="choice_only",
+        choices=["choice_only", "joint"],
+    )
     run_parser.add_argument("--dt-ms", type=float, default=1.0)
     run_parser.add_argument("--max-duration-ms", type=float, default=5000.0)
     run_parser.add_argument("--workers", type=int, default=1)
     run_parser.add_argument("--max-timeout-fallback-rate", type=float, default=0.20)
     run_parser.add_argument("--max-timeout-resample-retries", type=int, default=5)
+    run_parser.add_argument(
+        "--surrogate-subjective-h-global",
+        type=float,
+        default=None,
+        help="Optional fixed subjective H used by surrogate generating agents.",
+    )
     run_parser.add_argument("--seed", type=int, default=0)
     run_parser.add_argument("--overwrite", action="store_true")
 
@@ -111,7 +130,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     participant_run_parser.add_argument("--run-id", type=str, required=True)
     participant_run_parser.add_argument("--output-root", type=str, default="data/elias")
     participant_run_parser.add_argument("--csv-path", type=str, default="data/participants.csv")
-    participant_run_parser.add_argument("--hazard-col", type=str, default="subjective_h_snapshot")
+    participant_run_parser.add_argument(
+        "--hazard-col",
+        type=str,
+        default="subjective_h_snapshot",
+        help="Deprecated compatibility argument; ignored by active internal-H flow.",
+    )
     participant_run_parser.add_argument(
         "--participant-ids",
         type=str,
@@ -133,6 +157,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     participant_run_parser.add_argument("--eps", type=float, default=1e-12)
     participant_run_parser.add_argument("--dt-ms", type=float, default=1.0)
     participant_run_parser.add_argument("--max-duration-ms", type=float, default=5000.0)
+    participant_run_parser.add_argument(
+        "--fit-objective",
+        type=str,
+        default="choice_only",
+        choices=["choice_only", "joint"],
+    )
     participant_run_parser.add_argument(
         "--winner-primary-score-column",
         type=str,
@@ -164,7 +194,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     pipeline_parser.add_argument("--run-id", type=str, required=True)
     pipeline_parser.add_argument("--output-root", type=str, default="data/elias")
     pipeline_parser.add_argument("--csv-path", type=str, default="data/participants.csv")
-    pipeline_parser.add_argument("--hazard-col", type=str, default="subjective_h_snapshot")
+    pipeline_parser.add_argument(
+        "--hazard-col",
+        type=str,
+        default="subjective_h_snapshot",
+        help="Deprecated compatibility argument; ignored by active internal-H flow.",
+    )
     pipeline_parser.add_argument(
         "--participant-ids",
         type=str,
@@ -187,15 +222,28 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     pipeline_parser.add_argument("--step3-fit-n-starts", type=int, default=4)
     pipeline_parser.add_argument("--step3-fit-n-iterations", type=int, default=8)
     pipeline_parser.add_argument("--step3-fit-n-sims-per-trial", type=int, default=150)
+    pipeline_parser.add_argument(
+        "--step3-fit-objective",
+        type=str,
+        default="choice_only",
+        choices=["choice_only", "joint"],
+    )
     pipeline_parser.add_argument("--step3-workers", type=int, default=1)
     pipeline_parser.add_argument("--step3-max-timeout-fallback-rate", type=float, default=0.20)
     pipeline_parser.add_argument("--step3-max-timeout-resample-retries", type=int, default=5)
+    pipeline_parser.add_argument("--step3-surrogate-subjective-h-global", type=float, default=None)
     pipeline_parser.add_argument("--step3-soft-gate-joint-diag-min", type=float, default=0.60)
     pipeline_parser.add_argument("--step3-soft-gate-param-median-r-min", type=float, default=0.30)
 
     pipeline_parser.add_argument("--step4-fit-n-starts", type=int, default=4)
     pipeline_parser.add_argument("--step4-fit-n-iterations", type=int, default=8)
     pipeline_parser.add_argument("--step4-fit-n-sims-per-trial", type=int, default=150)
+    pipeline_parser.add_argument(
+        "--step4-fit-objective",
+        type=str,
+        default="choice_only",
+        choices=["choice_only", "joint"],
+    )
     pipeline_parser.add_argument("--step4-eval-n-sims-per-trial", type=int, default=150)
     pipeline_parser.add_argument("--step4-workers", type=int, default=1)
     pipeline_parser.add_argument("--step4-rt-bin-width-ms", type=float, default=20.0)
@@ -229,7 +277,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     pipeline45_parser.add_argument("--run-id", type=str, required=True)
     pipeline45_parser.add_argument("--output-root", type=str, default="data/elias")
     pipeline45_parser.add_argument("--csv-path", type=str, default="data/participants.csv")
-    pipeline45_parser.add_argument("--hazard-col", type=str, default="subjective_h_snapshot")
+    pipeline45_parser.add_argument(
+        "--hazard-col",
+        type=str,
+        default="subjective_h_snapshot",
+        help="Deprecated compatibility argument; ignored by active internal-H flow.",
+    )
     pipeline45_parser.add_argument(
         "--participant-ids",
         type=str,
@@ -250,6 +303,12 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     pipeline45_parser.add_argument("--step4-fit-n-starts", type=int, default=4)
     pipeline45_parser.add_argument("--step4-fit-n-iterations", type=int, default=8)
     pipeline45_parser.add_argument("--step4-fit-n-sims-per-trial", type=int, default=150)
+    pipeline45_parser.add_argument(
+        "--step4-fit-objective",
+        type=str,
+        default="choice_only",
+        choices=["choice_only", "joint"],
+    )
     pipeline45_parser.add_argument("--step4-eval-n-sims-per-trial", type=int, default=150)
     pipeline45_parser.add_argument("--step4-workers", type=int, default=1)
     pipeline45_parser.add_argument("--step4-rt-bin-width-ms", type=float, default=20.0)
@@ -288,11 +347,17 @@ def _cmd_surrogate_run(args: argparse.Namespace) -> None:
         fit_n_starts=int(args.fit_n_starts),
         fit_n_iterations=int(args.fit_n_iterations),
         fit_n_sims_per_trial=int(args.fit_n_sims_per_trial),
+        fit_objective=str(args.fit_objective),
         dt_ms=float(args.dt_ms),
         max_duration_ms=float(args.max_duration_ms),
         workers=int(args.workers),
         max_timeout_fallback_rate=float(args.max_timeout_fallback_rate),
         max_timeout_resample_retries=int(args.max_timeout_resample_retries),
+        surrogate_subjective_h_global=(
+            None
+            if args.surrogate_subjective_h_global is None
+            else float(args.surrogate_subjective_h_global)
+        ),
         random_seed=int(args.seed),
     )
 
@@ -366,6 +431,7 @@ def _cmd_participant_run(args: argparse.Namespace) -> None:
         dt_ms=float(args.dt_ms),
         max_duration_ms=float(args.max_duration_ms),
         random_seed=int(args.seed),
+        fit_objective=str(args.fit_objective),
         winner_primary_score_column=str(args.winner_primary_score_column),
         winner_tie_tolerance=float(args.winner_tie_tolerance),
         workers=int(args.workers),
@@ -443,11 +509,17 @@ def _cmd_pipeline_run(args: argparse.Namespace) -> None:
         fit_n_starts=int(args.step3_fit_n_starts),
         fit_n_iterations=int(args.step3_fit_n_iterations),
         fit_n_sims_per_trial=int(args.step3_fit_n_sims_per_trial),
+        fit_objective=str(args.step3_fit_objective),
         dt_ms=float(args.dt_ms),
         max_duration_ms=float(args.max_duration_ms),
         workers=int(args.step3_workers),
         max_timeout_fallback_rate=float(args.step3_max_timeout_fallback_rate),
         max_timeout_resample_retries=int(args.step3_max_timeout_resample_retries),
+        surrogate_subjective_h_global=(
+            None
+            if args.step3_surrogate_subjective_h_global is None
+            else float(args.step3_surrogate_subjective_h_global)
+        ),
         random_seed=int(args.seed),
         soft_gate_joint_diag_min=float(args.step3_soft_gate_joint_diag_min),
         soft_gate_param_median_r_min=float(args.step3_soft_gate_param_median_r_min),
@@ -464,6 +536,7 @@ def _cmd_pipeline_run(args: argparse.Namespace) -> None:
         dt_ms=float(args.dt_ms),
         max_duration_ms=float(args.max_duration_ms),
         random_seed=int(args.seed),
+        fit_objective=str(args.step4_fit_objective),
         winner_primary_score_column=str(args.step4_winner_primary_score_column),
         winner_tie_tolerance=float(args.step4_winner_tie_tolerance),
         workers=int(args.step4_workers),
@@ -543,6 +616,7 @@ def _cmd_pipeline_run45(args: argparse.Namespace) -> None:
         dt_ms=float(args.dt_ms),
         max_duration_ms=float(args.max_duration_ms),
         random_seed=int(args.seed),
+        fit_objective=str(args.step4_fit_objective),
         winner_primary_score_column=str(args.step4_winner_primary_score_column),
         winner_tie_tolerance=float(args.step4_winner_tie_tolerance),
         workers=int(args.step4_workers),

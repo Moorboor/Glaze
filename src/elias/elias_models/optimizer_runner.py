@@ -29,6 +29,7 @@ _DEFAULT_FIT_CONFIG: dict[str, object] = {
     "rt_max_ms": 5000.0,
     "eps": 1e-12,
     "score_seed_base": 0,
+    "fit_objective": "choice_only",
     "fixed_model_params": {
         "dt_ms": 1.0,
         "max_duration_ms": 5000.0,
@@ -65,6 +66,8 @@ def _build_fit_config(fit_config: dict[str, object] | None) -> dict[str, object]
         raise ValueError("rt_max_ms must be > 0.")
     if float(merged["eps"]) <= 0.0:
         raise ValueError("eps must be > 0.")
+    if str(merged["fit_objective"]) not in {"choice_only", "joint"}:
+        raise ValueError("fit_objective must be one of {'choice_only', 'joint'}.")
 
     fixed_params = merged.get("fixed_model_params", {})
     if not isinstance(fixed_params, dict):
@@ -104,11 +107,19 @@ def _score_eta_candidate(
         random_seed=int(score_seed),
     )
     aggregate = dict(score_output["aggregate_scores"])
+    fit_objective = str(fit_config.get("fit_objective", "choice_only"))
+    fit_objective_score = (
+        float(aggregate["choice_only_score"])
+        if fit_objective == "choice_only"
+        else float(aggregate["joint_score"])
+    )
 
     return {
         "eta_vector": np.asarray(eta_vector, dtype=float).copy(),
         "theta_vector": np.asarray(theta_vector, dtype=float).copy(),
         "aggregate_scores": aggregate,
+        "fit_objective": fit_objective,
+        "fit_objective_score": float(fit_objective_score),
         "joint_score": float(aggregate["joint_score"]),
         "choice_only_score": float(aggregate["choice_only_score"]),
         "rt_only_cond_score": float(aggregate["rt_only_cond_score"]),
@@ -122,7 +133,10 @@ def fit_model_parameters(
     fit_config: dict[str, object] | None = None,
     random_seed: int = 0,
 ) -> dict[str, object]:
-    """Fit one model via multi-start search in eta space against joint score."""
+    """Fit one model via multi-start search in eta space.
+
+    Default objective is Glaze-consistent choice-only NLL.
+    """
     config = _build_fit_config(fit_config)
     parameter_spec = get_parameter_spec(model_name)
     n_params = len(parameter_spec)
@@ -155,12 +169,14 @@ def fit_model_parameters(
             {
                 "start_index": int(start_idx),
                 "iteration_index": -1,
+                "fit_objective": str(current_result["fit_objective"]),
+                "fit_objective_score": float(current_result["fit_objective_score"]),
                 "joint_score": float(current_result["joint_score"]),
                 "accepted": True,
             }
         )
 
-        if best_result is None or current_result["joint_score"] < best_result["joint_score"]:
+        if best_result is None or current_result["fit_objective_score"] < best_result["fit_objective_score"]:
             best_result = current_result
 
         # Local random-walk refinement with geometric step-size decay.
@@ -181,9 +197,14 @@ def fit_model_parameters(
             )
             n_evaluations += 1
 
-            # Greedy acceptance keeps implementation simple and deterministic
-            # given seeds/config.
-            accepted = proposed_result["joint_score"] < current_result["joint_score"]
+            # Legacy acceptance rule (kept for traceability):
+            # accepted = proposed_result["joint_score"] < current_result["joint_score"]
+            # Why replaced:
+            # fitting now defaults to Glaze-consistent choice-only objective.
+            accepted = (
+                proposed_result["fit_objective_score"]
+                < current_result["fit_objective_score"]
+            )
             if accepted:
                 current_eta = proposed_eta
                 current_result = proposed_result
@@ -192,12 +213,14 @@ def fit_model_parameters(
                 {
                     "start_index": int(start_idx),
                     "iteration_index": int(iteration_idx),
+                    "fit_objective": str(proposed_result["fit_objective"]),
+                    "fit_objective_score": float(proposed_result["fit_objective_score"]),
                     "joint_score": float(proposed_result["joint_score"]),
                     "accepted": bool(accepted),
                 }
             )
 
-            if current_result["joint_score"] < best_result["joint_score"]:
+            if current_result["fit_objective_score"] < best_result["fit_objective_score"]:
                 best_result = current_result
 
             local_scale *= step_decay
@@ -213,6 +236,8 @@ def fit_model_parameters(
 
     return {
         "model_name": str(model_name),
+        "fit_objective": str(best_result["fit_objective"]),
+        "best_fit_objective_score": float(best_result["fit_objective_score"]),
         "best_joint_score": float(best_result["joint_score"]),
         "best_choice_only_score": float(best_result["choice_only_score"]),
         "best_rt_only_cond_score": float(best_result["rt_only_cond_score"]),

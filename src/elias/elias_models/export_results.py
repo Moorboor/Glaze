@@ -14,9 +14,10 @@ import pandas as pd
 
 
 HAZARD_CAVEAT_SENTENCE = (
-    "Caveat: Hazard input was fixed to `subjective_h_snapshot` and treated as an externally "
-    "provided past-only signal during fit and evaluation; this does not establish endogenous "
-    "hazard inference by the models."
+    "Caveat: Subjective hazard was inferred internally from TRAIN choices (blockwise) and reused "
+    "for TEST scoring; objective hazard was only used to describe/generate environments. This "
+    "supports Glaze-consistent comparison, but does not prove the inferred hazard is uniquely "
+    "identifiable."
 )
 
 

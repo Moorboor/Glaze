@@ -10,7 +10,6 @@ from pathlib import Path
 try:
     from common_helpers.preprocessing import (
         NUMERIC_INPUT_COLUMNS as SHARED_NUMERIC_INPUT_COLUMNS,
-        PREPROCESS_REQUIRED_COLUMNS as SHARED_PREPROCESS_REQUIRED_COLUMNS,
         REQUIRED_INPUT_COLUMNS as SHARED_REQUIRED_INPUT_COLUMNS,
     )
 except ModuleNotFoundError:
@@ -19,7 +18,6 @@ except ModuleNotFoundError:
         sys.path.insert(0, str(src_root))
     from common_helpers.preprocessing import (
         NUMERIC_INPUT_COLUMNS as SHARED_NUMERIC_INPUT_COLUMNS,
-        PREPROCESS_REQUIRED_COLUMNS as SHARED_PREPROCESS_REQUIRED_COLUMNS,
         REQUIRED_INPUT_COLUMNS as SHARED_REQUIRED_INPUT_COLUMNS,
     )
 
@@ -39,10 +37,18 @@ MODEL_READY_COLUMNS: tuple[str, ...] = (
     "choice",
     "reaction_time_ms",
     "belief_L",
-    "prev_observed_belief_L",
+    "prev_normative_belief_L",
 )
 
-PREPROCESS_REQUIRED_COLUMNS: tuple[str, ...] = SHARED_PREPROCESS_REQUIRED_COLUMNS
+# Active preprocessing no longer requires externally supplied hazard snapshots.
+PREPROCESS_REQUIRED_COLUMNS: tuple[str, ...] = (
+    "choice",
+    "reaction_time_ms",
+    "LLR",
+    "belief_L",
+    "hazard_rate",
+    "noise_sigma",
+)
 
 SUPPORTED_MODEL_NAMES: tuple[str, ...] = (
     "cont_threshold",

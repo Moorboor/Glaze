@@ -24,6 +24,7 @@ from .analysis_plots import (
 from .continuous_models import run_model_a_threshold, run_model_b_asymptote
 from .data_loading import load_participant_data, preprocess_loaded_participant_data
 from .ddm_model import run_model_c_ddm
+from .environment import generate_environment_from_template, objective_h_mean_from_template
 from .likelihood_scoring import score_model_simulation_likelihood
 from .orchestration import run_all_models_for_participant
 from .optimizer_runner import fit_model_parameters
@@ -60,6 +61,13 @@ from .train_test_eval import (
 )
 from .winner_rules import apply_step4_winner_rules
 from .seed_utils import derive_seed
+from .subjective_h import (
+    SubjectiveHGrid,
+    attach_subjective_h_from_train,
+    build_normative_belief_columns,
+    fit_blockwise_subjective_h_choice_only,
+    glaze_psi,
+)
 
 __all__ = [
     "resolve_run_root",
@@ -79,6 +87,8 @@ __all__ = [
     "run_model_a_threshold",
     "run_model_b_asymptote",
     "run_model_c_ddm",
+    "generate_environment_from_template",
+    "objective_h_mean_from_template",
     "run_all_models_for_participant",
     "score_model_simulation_likelihood",
     "fit_model_parameters",
@@ -102,6 +112,11 @@ __all__ = [
     "run_step45_pipeline",
     "run_step345_pipeline",
     "derive_seed",
+    "SubjectiveHGrid",
+    "glaze_psi",
+    "fit_blockwise_subjective_h_choice_only",
+    "attach_subjective_h_from_train",
+    "build_normative_belief_columns",
     "get_parameter_spec",
     "eta_to_theta",
     "theta_to_eta",

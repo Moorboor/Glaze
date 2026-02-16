@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import sys
+import warnings
 from pathlib import Path
 
 import pandas as pd
@@ -33,14 +34,39 @@ def load_participant_data(
     hazard_col: str = "subjective_h_snapshot",
     reset_on: tuple[str, ...] = ("participant", "block"),
 ) -> pd.DataFrame:
-    """Load participant data and normalize observed choices to `-1/+1`."""
+    """Load participant data and normalize observed choices to `-1/+1`.
+
+    Note:
+        `hazard_col` is kept only for CLI/API compatibility. Active modeling
+        now infers subjective hazard internally from TRAIN behavior.
+    """
+    if str(hazard_col) != "subjective_h_snapshot":
+        warnings.warn(
+            "hazard_col is deprecated in active modeling flow and is ignored.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+    # Legacy path kept as context:
+    # loaded_df = shared_load_participant_data(
+    #     csv_path=csv_path,
+    #     participant_ids=participant_ids,
+    #     hazard_col=hazard_col,
+    #     reset_on=reset_on,
+    # )
+    # Why replaced:
+    # The old path injected H from an external CSV column. The refactor moves H
+    # inference into a dedicated internal stage (Glaze-consistent subjective-H fit).
     loaded_df = shared_load_participant_data(
         csv_path=csv_path,
         participant_ids=participant_ids,
-        hazard_col=hazard_col,
+        hazard_col="hazard_rate",
         reset_on=reset_on,
     )
-    return _normalize_choice_column_to_pm1(loaded_df)
+    loaded_df = _normalize_choice_column_to_pm1(loaded_df)
+    # Remove old externally-assigned hazard/state columns from the active input.
+    loaded_df = loaded_df.drop(columns=["H", "prev_observed_belief_L"], errors="ignore")
+    return loaded_df
 
 
 def preprocess_loaded_participant_data(

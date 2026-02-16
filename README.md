@@ -77,6 +77,22 @@ Current merged dataset expectation:
 - `P03` (`maik.csv`): 160 rows
 - Total before exclusions in `participants.csv`: 467 rows
 
+## Modeling Policy (Current)
+
+The active Elias pipeline now follows a Glaze-consistent separation:
+
+1. **Environment layer (objective):**
+   - Uses `hazard_rate` to describe or generate hidden-state switches.
+   - Produces trial evidence (`LLR`) from a simplified 1D signed-distance setup.
+2. **Agent layer (subjective):**
+   - Infers **blockwise subjective hazard** from TRAIN choices only (fixed `beta=1`).
+   - Reconstructs internal normative beliefs recursively from fitted `H` and `LLR`.
+3. **Model fitting/evaluation:**
+   - Parameter fitting objective defaults to **choice-only** on TRAIN.
+   - Held-out model comparison can still use **TEST joint score** (choice + RT).
+
+Important: Evan’s shorter block is preserved exactly; no missing trials are invented.
+
 ## Environment Setup
 
 Create the Conda environment from `environment.yml`:
@@ -102,6 +118,8 @@ Main entrypoint:
 PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run \
   --run-id run_2026_02_15_full \
   --csv-path data/participants.csv \
+  --step3-fit-objective choice_only \
+  --step4-fit-objective choice_only \
   --output-root data/elias
 ```
 
@@ -155,6 +173,7 @@ PYTHONPATH=src:src/elias python -m elias_models.cli surrogate-run \
   --run-id run_2026_02_16_step3_only \
   --csv-path data/participants.csv \
   --output-root data/elias \
+  --fit-objective choice_only \
   --workers 10
 ```
 
@@ -165,6 +184,7 @@ PYTHONPATH=src:src/elias python -m elias_models.cli participant-run \
   --run-id run_2026_02_16_step4_only \
   --csv-path data/participants.csv \
   --output-root data/elias \
+  --fit-objective choice_only \
   --workers 10
 ```
 

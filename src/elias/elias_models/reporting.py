@@ -26,6 +26,7 @@ from .results_store import (
     save_table_csv,
 )
 from .surrogate_recovery import load_step3_run, run_step3_pipeline
+from .subjective_h import attach_subjective_h_from_train, build_normative_belief_columns
 from .train_test_eval import run_step4_pipeline
 
 
@@ -241,8 +242,60 @@ def _run_step5_stage(
     try:
         # Step 5 diagnostics are computed from persisted Step 4 winners/params.
         winner_parameter_table = _build_winner_parameter_table(step4_tables)
+        subjective_h_table = step4_tables.get("participant_subjective_h_train", pd.DataFrame())
+        if not subjective_h_table.empty:
+            df_step5_ready = attach_subjective_h_from_train(
+                df_all,
+                subjective_h_table,
+                participant_col="participant_id",
+                block_col="block_id",
+                fitted_h_col="fitted_subjective_h",
+                output_h_col="H",
+            )
+            df_step5_ready = build_normative_belief_columns(
+                df_step5_ready,
+                participant_col="participant_id",
+                block_col="block_id",
+                trial_col="trial_index",
+                llr_col="LLR",
+                hazard_col="H",
+                output_prev_col="prev_normative_belief_L",
+                output_curr_col="normative_belief_L",
+                output_psi_col="psi_t",
+            )
+        else:
+            # Keep legacy compatibility for old runs that predate subjective-H export.
+            df_step5_ready = df_all.copy()
+            if "H" not in df_step5_ready.columns:
+                if "subjective_h_snapshot" in df_step5_ready.columns:
+                    df_step5_ready["H"] = pd.to_numeric(
+                        df_step5_ready["subjective_h_snapshot"],
+                        errors="coerce",
+                    )
+                elif "hazard_rate" in df_step5_ready.columns:
+                    df_step5_ready["H"] = pd.to_numeric(
+                        df_step5_ready["hazard_rate"],
+                        errors="coerce",
+                    )
+                else:
+                    raise ValueError(
+                        "Step 5 fallback path could not derive H: expected either "
+                        "`subjective_h_snapshot` or `hazard_rate`."
+                    )
+            df_step5_ready = build_normative_belief_columns(
+                df_step5_ready,
+                participant_col="participant_id",
+                block_col="block_id",
+                trial_col="trial_index",
+                llr_col="LLR",
+                hazard_col="H",
+                output_prev_col="prev_normative_belief_L",
+                output_curr_col="normative_belief_L",
+                output_psi_col="psi_t",
+            )
+
         ppc_outputs = run_posterior_predictive_checks(
-            df_all,
+            df_step5_ready,
             winner_parameter_table,
             run_id=str(run_id),
             n_sims_per_trial=int(normalized_step5_config["ppc_n_sims_per_trial"]),
@@ -252,9 +305,9 @@ def _run_step5_stage(
             random_seed=int(normalized_step5_config["random_seed"]),
             workers=int(normalized_step5_config["workers"]),
         )
-        hazard_outputs = run_change_hazard_checks(df_all, winner_parameter_table)
+        hazard_outputs = run_change_hazard_checks(df_step5_ready, winner_parameter_table)
         latent_outputs = run_latent_reporting(
-            df_all,
+            df_step5_ready,
             winner_parameter_table,
             run_id=str(run_id),
             ddm_n_samples_per_trial=int(normalized_step5_config["ddm_n_samples_per_trial"]),
