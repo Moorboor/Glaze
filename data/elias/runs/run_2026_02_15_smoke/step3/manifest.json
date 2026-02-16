@@ -1,0 +1,29 @@
+{
+  "run_id": "run_2026_02_15_smoke",
+  "pipeline_name": "step3",
+  "created_at_utc": "2026-02-16T10:34:22+00:00",
+  "output_root": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias",
+  "run_dir": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_15_smoke/step3",
+  "config_path": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_15_smoke/step3/config.json",
+  "status": "weak",
+  "n_surrogates_total": 3,
+  "n_fit_rows": 9,
+  "table_paths": {
+    "pseudo_true_table": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_15_smoke/step3/tables/pseudo_true_table.csv",
+    "surrogate_metadata": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_15_smoke/step3/tables/surrogate_metadata.csv",
+    "surrogate_trials": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_15_smoke/step3/tables/surrogate_trials.csv",
+    "fit_results": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_15_smoke/step3/tables/fit_results.csv",
+    "model_recovery_joint_counts": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_15_smoke/step3/tables/model_recovery_joint_counts.csv",
+    "model_recovery_joint_rates": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_15_smoke/step3/tables/model_recovery_joint_rates.csv",
+    "model_recovery_bic_counts": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_15_smoke/step3/tables/model_recovery_bic_counts.csv",
+    "model_recovery_bic_rates": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_15_smoke/step3/tables/model_recovery_bic_rates.csv",
+    "parameter_recovery_rows": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_15_smoke/step3/tables/parameter_recovery_rows.csv",
+    "parameter_recovery_summary": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_15_smoke/step3/tables/parameter_recovery_summary.csv",
+    "soft_gate_summary": "/home/elias/Documents/Studium/coxiMaster/2025_WS/ChangingENVS/GlazeGroupRepo/Glaze/data/elias/runs/run_2026_02_15_smoke/step3/tables/soft_gate_summary.csv"
+  },
+  "soft_gate": {
+    "overall_status": "weak",
+    "joint_diag_min": 0.6,
+    "param_median_r_min": 0.3
+  }
+}

@@ -1,0 +1,2 @@
+group_winner_model_name,n_participants,n_candidate_models,max_vote_count,vote_tie,vote_tied_models,tie_break_applied,tie_break_rule,tie_break_joint_sums_for_vote_ties,primary_score_column,tie_tolerance
+cont_asymptote,3,3,3,False,"__JSON__::[""cont_asymptote""]",False,none,"__JSON__::{""cont_asymptote"":2192.7874535539468}",joint_score,1e-09

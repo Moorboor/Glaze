@@ -1,0 +1,4 @@
+model_name,participant_win_count,test_joint_score_sum
+cont_asymptote,3,2192.7874535539468
+ddm_dnm,0,3905.698503882628
+cont_threshold,0,5189.4791432787115
