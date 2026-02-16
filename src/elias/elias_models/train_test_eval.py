@@ -1,3 +1,8 @@
+#
+# Step 4 participant train/test fitting and persistence.
+# Main functions: build_step4_pipeline_config, run_step4_pipeline,
+# load_step4_run, list_step4_runs.
+
 """Step 4 participant train/test fitting pipeline with persisted outputs."""
 
 from __future__ import annotations
@@ -20,13 +25,14 @@ from .results_store import (
     load_table_csv,
     prepare_run_dir,
     resolve_elias_data_root,
+    resolve_unified_run_root,
     save_json,
     save_table_csv,
 )
 from .winner_rules import apply_step4_winner_rules
 
 
-STEP4_PIPELINE_NAME = "participant_fit"
+STEP4_PIPELINE_NAME = "step4"
 _STEP4_TABLE_NAMES: tuple[str, ...] = (
     "participant_model_fits_train",
     "participant_model_scores_test",
@@ -184,6 +190,47 @@ def _fit_config_from_step4_config(config: dict[str, object]) -> dict[str, object
     }
 
 
+def _resolve_step4_run_dir(output_root: str | Path, run_id: str) -> Path:
+    """Resolve a Step 4 run directory in the unified layout.
+
+    Args:
+        output_root: Absolute or repository-relative Elias output root.
+        run_id: Step 4 run identifier.
+
+    Returns:
+        Existing Step 4 run directory path.
+
+    Raises:
+        FileNotFoundError: If the run directory does not exist.
+    """
+    run_dir = resolve_unified_run_root(output_root, run_id) / STEP4_PIPELINE_NAME
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Step 4 run directory not found: {run_dir}")
+    return run_dir
+
+
+def _iter_step4_run_dirs(output_root: str | Path) -> list[Path]:
+    """Collect Step 4 run directories from unified storage.
+
+    Args:
+        output_root: Absolute or repository-relative Elias output root.
+
+    Returns:
+        Run directories in deterministic order.
+    """
+    data_root = resolve_elias_data_root(output_root)
+    runs_root = data_root / "runs"
+    run_dirs: list[Path] = []
+    if not runs_root.exists():
+        return run_dirs
+
+    for run_root in sorted(runs_root.iterdir()):
+        step_dir = run_root / STEP4_PIPELINE_NAME
+        if step_dir.is_dir():
+            run_dirs.append(step_dir)
+    return run_dirs
+
+
 def _score_dataset_for_model(
     df: pd.DataFrame,
     *,
@@ -235,6 +282,7 @@ def run_step4_pipeline(
     )
     normalized_config = _normalize_step4_pipeline_config(config)
 
+    # Every run now stores step outputs under `data/elias/runs/<run_id>/step4`.
     paths = prepare_run_dir(
         output_root,
         pipeline_name=STEP4_PIPELINE_NAME,
@@ -462,10 +510,7 @@ def load_step4_run(
     Returns:
         Dictionary with loaded manifest, config, and tables.
     """
-    data_root = resolve_elias_data_root(output_root)
-    run_dir = data_root / STEP4_PIPELINE_NAME / "runs" / str(run_id)
-    if not run_dir.exists():
-        raise FileNotFoundError(f"Step 4 run directory not found: {run_dir}")
+    run_dir = _resolve_step4_run_dir(output_root, run_id)
 
     manifest_path = run_dir / "manifest.json"
     config_path = run_dir / "config.json"
@@ -510,9 +555,8 @@ def list_step4_runs(
     Returns:
         Run metadata table sorted by creation time descending.
     """
-    data_root = resolve_elias_data_root(output_root)
-    runs_root = data_root / STEP4_PIPELINE_NAME / "runs"
-    if not runs_root.exists():
+    run_dirs = _iter_step4_run_dirs(output_root)
+    if not run_dirs:
         return pd.DataFrame(
             columns=[
                 "run_id",
@@ -526,16 +570,14 @@ def list_step4_runs(
         )
 
     rows: list[dict[str, object]] = []
-    for run_dir in sorted(runs_root.iterdir()):
-        if not run_dir.is_dir():
-            continue
+    for run_dir in run_dirs:
         manifest_path = run_dir / "manifest.json"
         if not manifest_path.exists():
             continue
         manifest = load_json(manifest_path)
         rows.append(
             {
-                "run_id": str(manifest.get("run_id", run_dir.name)),
+                "run_id": str(manifest.get("run_id", run_dir.parent.name)),
                 "created_at_utc": manifest.get("created_at_utc", ""),
                 "status": manifest.get("status", "unknown"),
                 "n_participants": manifest.get("n_participants", np.nan),

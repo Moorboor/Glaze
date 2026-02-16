@@ -1,3 +1,8 @@
+#
+# Step 3 surrogate-recovery pipeline and persistence helpers.
+# Main functions: build_step3_pipeline_config, run_step3_pipeline,
+# load_step3_run, list_step3_runs, run_surrogate_recovery.
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -26,12 +31,13 @@ from .results_store import (
     load_table_csv,
     prepare_run_dir,
     resolve_elias_data_root,
+    resolve_unified_run_root,
     save_json,
     save_table_csv,
 )
 
 
-STEP3_PIPELINE_NAME = "surrogate_recovery"
+STEP3_PIPELINE_NAME = "step3"
 _STEP3_TABLE_NAMES: tuple[str, ...] = (
     "pseudo_true_table",
     "surrogate_metadata",
@@ -194,6 +200,50 @@ def _surrogate_config_from_step3_config(config: dict[str, object]) -> dict[str, 
             "max_duration_ms": float(config["max_duration_ms"]),
         },
     }
+
+
+def _resolve_step3_run_dir(output_root: str | Path, run_id: str) -> Path:
+    """Resolve a Step 3 run directory in the unified layout.
+
+    Args:
+        output_root: Absolute or repository-relative Elias output root.
+        run_id: Step 3 run identifier.
+
+    Returns:
+        Existing Step 3 run directory path.
+
+    Raises:
+        FileNotFoundError: If the run directory does not exist.
+    """
+    unified_dir = resolve_unified_run_root(output_root, run_id) / STEP3_PIPELINE_NAME
+    if unified_dir.exists():
+        return unified_dir
+
+    raise FileNotFoundError(f"Step 3 run directory not found: {unified_dir}")
+
+
+def _iter_step3_run_dirs(output_root: str | Path) -> list[Path]:
+    """Collect Step 3 run directories from the unified layout.
+
+    Args:
+        output_root: Absolute or repository-relative Elias output root.
+
+    Returns:
+        Run directories in deterministic order.
+    """
+    data_root = resolve_elias_data_root(output_root)
+    unified_runs_root = data_root / "runs"
+    run_dirs: list[Path] = []
+
+    if not unified_runs_root.exists():
+        return run_dirs
+
+    for run_root in sorted(unified_runs_root.iterdir()):
+        step_dir = run_root / STEP3_PIPELINE_NAME
+        if step_dir.is_dir():
+            run_dirs.append(step_dir)
+
+    return run_dirs
 
 
 def sample_pseudo_true_thetas(
@@ -656,8 +706,20 @@ def run_step3_pipeline(
     config: dict[str, object],
     overwrite: bool = False,
 ) -> dict[str, object]:
-    """Run canonical Step 3 pipeline and persist all artifacts to disk."""
+    """Run canonical Step 3 pipeline and persist artifacts in unified layout.
+
+    Args:
+        df_template: Preprocessed participant template table.
+        run_id: Stable run identifier.
+        output_root: Absolute or repository-relative Elias output root.
+        config: Step 3 pipeline configuration dictionary.
+        overwrite: Whether to replace an existing Step 3 folder.
+
+    Returns:
+        In-memory tables plus persisted artifact metadata.
+    """
     normalized_config = _normalize_step3_pipeline_config(config)
+    # Every run now stores step outputs under `data/elias/runs/<run_id>/step3`.
     paths = prepare_run_dir(
         output_root,
         pipeline_name=STEP3_PIPELINE_NAME,
@@ -817,11 +879,16 @@ def load_step3_run(
     *,
     output_root: str | Path = "data/elias",
 ) -> dict[str, object]:
-    """Load a persisted Step 3 run and decode all stored tables."""
-    data_root = resolve_elias_data_root(output_root)
-    run_dir = data_root / STEP3_PIPELINE_NAME / "runs" / str(run_id)
-    if not run_dir.exists():
-        raise FileNotFoundError(f"Step 3 run directory not found: {run_dir}")
+    """Load a persisted Step 3 run from unified storage.
+
+    Args:
+        run_id: Step 3 run identifier.
+        output_root: Absolute or repository-relative Elias output root.
+
+    Returns:
+        Manifest/config payloads and decoded Step 3 tables.
+    """
+    run_dir = _resolve_step3_run_dir(output_root, run_id)
 
     manifest_path = run_dir / "manifest.json"
     config_path = run_dir / "config.json"
@@ -858,10 +925,16 @@ def list_step3_runs(
     *,
     output_root: str | Path = "data/elias",
 ) -> pd.DataFrame:
-    """List persisted Step 3 runs with manifest metadata."""
-    data_root = resolve_elias_data_root(output_root)
-    runs_root = data_root / STEP3_PIPELINE_NAME / "runs"
-    if not runs_root.exists():
+    """List persisted Step 3 runs from unified storage.
+
+    Args:
+        output_root: Absolute or repository-relative Elias output root.
+
+    Returns:
+        Run metadata table sorted by creation time descending.
+    """
+    run_dirs = _iter_step3_run_dirs(output_root)
+    if not run_dirs:
         return pd.DataFrame(
             columns=[
                 "run_id",
@@ -874,9 +947,7 @@ def list_step3_runs(
         )
 
     rows: list[dict[str, object]] = []
-    for run_dir in sorted(runs_root.iterdir()):
-        if not run_dir.is_dir():
-            continue
+    for run_dir in run_dirs:
         manifest_path = run_dir / "manifest.json"
         if not manifest_path.exists():
             continue
@@ -884,7 +955,7 @@ def list_step3_runs(
         manifest = load_json(manifest_path)
         rows.append(
             {
-                "run_id": str(manifest.get("run_id", run_dir.name)),
+                "run_id": str(manifest.get("run_id", run_dir.parent.name)),
                 "created_at_utc": manifest.get("created_at_utc", ""),
                 "status": manifest.get("status", "unknown"),
                 "n_surrogates_total": manifest.get("n_surrogates_total", np.nan),

@@ -1,3 +1,8 @@
+#
+# Cross-step Step 3/4/5 orchestration and Step 5 persistence helpers.
+# Main functions: build_step5_pipeline_config, run_step345_pipeline,
+# run_step34_pipeline, and Step5PipelineError.
+
 """Cross-step reporting orchestration helpers."""
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ from .latent_checks import run_change_hazard_checks, run_latent_reporting
 from .posterior_predictive import run_posterior_predictive_checks
 from .results_store import (
     build_basic_manifest,
+    prepare_pipeline_run_root,
     prepare_run_dir,
     save_json,
     save_table_csv,
@@ -68,7 +74,20 @@ def build_step5_pipeline_config(
     random_seed: int = 0,
     latent_cont_noise_std: float = 0.0,
 ) -> dict[str, object]:
-    """Build canonical Step 5 pipeline configuration."""
+    """Build canonical Step 5 pipeline configuration.
+
+    Args:
+        ppc_n_sims_per_trial: Simulation count per trial for posterior predictive checks.
+        ddm_n_samples_per_trial: DDM sample count per trial for latent reporting.
+        rt_bin_width_ms: Reaction-time histogram bin width.
+        rt_max_ms: Maximum reaction-time edge for scoring histograms.
+        eps: Numerical floor for probability terms.
+        random_seed: Base deterministic seed for Step 5 analyses.
+        latent_cont_noise_std: Optional continuous-model noise for latent re-simulation.
+
+    Returns:
+        Normalized Step 5 configuration payload.
+    """
     if int(ppc_n_sims_per_trial) <= 0:
         raise ValueError("ppc_n_sims_per_trial must be > 0.")
     if int(ddm_n_samples_per_trial) <= 0:
@@ -178,37 +197,57 @@ def run_step345_pipeline(
     step5_config: dict[str, object] | None = None,
     overwrite: bool = False,
 ) -> dict[str, object]:
-    """Run Step 3, Step 4, and Step 5 pipelines with one linked reporting manifest."""
+    """Run Step 3, Step 4, and Step 5 with one unified run folder.
+
+    Args:
+        df_all: Preprocessed participant table with TRAIN/TEST split labels.
+        run_id: Stable run identifier shared across all three steps.
+        output_root: Absolute or repository-relative Elias output root.
+        step3_config: Step 3 configuration payload.
+        step4_config: Step 4 configuration payload.
+        step5_config: Optional Step 5 override payload.
+        overwrite: Whether to replace an existing unified run folder.
+
+    Returns:
+        Pipeline metadata, step outputs, and persisted artifact paths.
+
+    Raises:
+        Step5PipelineError: If Step 5 fails after Step 3 and Step 4 were persisted.
+    """
     if not str(run_id).strip():
         raise ValueError("run_id must not be empty.")
 
     normalized_step5_config = _normalize_step5_pipeline_config(step5_config)
-    step3_run_id = f"{str(run_id)}__step3"
-    step4_run_id = f"{str(run_id)}__step4"
-
-    step3_output = run_step3_pipeline(
-        df_all,
-        run_id=step3_run_id,
-        output_root=output_root,
-        config=step3_config,
-        overwrite=overwrite,
-    )
-    step4_output = run_step4_pipeline(
-        df_all,
-        run_id=step4_run_id,
-        output_root=output_root,
-        config=step4_config,
-        overwrite=overwrite,
-    )
-
-    report_paths = prepare_run_dir(
+    # Enforce one clean master folder per run to avoid cross-step stale artifacts.
+    run_root = prepare_pipeline_run_root(
         output_root,
-        pipeline_name="reporting",
         run_id=str(run_id),
         overwrite=overwrite,
     )
 
-    reports_dir = report_paths["run_dir"] / "reports"
+    step3_output = run_step3_pipeline(
+        df_all,
+        run_id=str(run_id),
+        output_root=output_root,
+        config=step3_config,
+        overwrite=False,
+    )
+    step4_output = run_step4_pipeline(
+        df_all,
+        run_id=str(run_id),
+        output_root=output_root,
+        config=step4_config,
+        overwrite=False,
+    )
+
+    step5_paths = prepare_run_dir(
+        output_root,
+        pipeline_name="step5",
+        run_id=str(run_id),
+        overwrite=False,
+    )
+
+    reports_dir = step5_paths["run_dir"] / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
 
     step5_status = "completed"
@@ -221,6 +260,7 @@ def run_step345_pipeline(
     step5_table_paths: dict[str, str] = {}
 
     try:
+        # Step 5 diagnostics are computed from persisted Step 3/4 winners and params.
         winner_parameter_table = _build_winner_parameter_table(step4_output["tables"])
         ppc_outputs = run_posterior_predictive_checks(
             df_all,
@@ -261,7 +301,7 @@ def run_step345_pipeline(
         }
         step5_table_paths = _save_step5_tables(
             step5_tables=step5_tables,
-            tables_dir=report_paths["tables_dir"],
+            tables_dir=step5_paths["tables_dir"],
         )
         report_path_obj = write_step5_report_markdown(
             reports_dir / "step5_report.md",
@@ -279,34 +319,38 @@ def run_step345_pipeline(
     except Exception as exc:
         step5_status = "failed"
         step5_error_message = str(exc)
-        error_log_path = report_paths["logs_dir"] / "step5_error.txt"
+        error_log_path = step5_paths["logs_dir"] / "step5_error.txt"
         error_log_path.write_text(traceback.format_exc(), encoding="utf-8")
         step5_error_log_path = str(error_log_path)
 
     config_payload = {
-        "step3_run_id": step3_run_id,
-        "step4_run_id": step4_run_id,
+        "run_id": str(run_id),
+        "run_root": str(run_root),
         "step3_config": step3_output["config"],
         "step4_config": step4_output["config"],
         "step5_config": normalized_step5_config,
         "step5_status": step5_status,
     }
-    config_path = save_json(config_payload, report_paths["run_dir"] / "config.json")
+    config_path = save_json(config_payload, run_root / "config.json")
 
     manifest_extra = {
         "step3": {
-            "run_id": step3_run_id,
+            "run_id": str(run_id),
             "run_dir": str(step3_output["run_dir"]),
             "status": str(step3_output["manifest"].get("status", "unknown")),
             "soft_gate": step3_output["manifest"].get("soft_gate", {}),
         },
         "step4": {
-            "run_id": step4_run_id,
+            "run_id": str(run_id),
             "run_dir": str(step4_output["run_dir"]),
             "status": str(step4_output["manifest"].get("status", "unknown")),
             "group_winner_model_name": step4_output["manifest"].get(
                 "group_winner_model_name", "unknown"
             ),
+        },
+        "step5": {
+            "run_id": str(run_id),
+            "run_dir": str(step5_paths["run_dir"]),
         },
         "step5_status": step5_status,
         "step5_table_paths": step5_table_paths,
@@ -319,28 +363,31 @@ def run_step345_pipeline(
 
     manifest = build_basic_manifest(
         run_id=str(run_id),
-        pipeline_name="reporting",
+        pipeline_name="step345_pipeline",
         output_root=output_root,
-        run_dir=report_paths["run_dir"],
+        run_dir=run_root,
         config_path=config_path,
         status="completed" if step5_status == "completed" else "step5_failed",
         extra=manifest_extra,
     )
-    manifest_path = save_json(manifest, report_paths["run_dir"] / "manifest.json")
+    manifest_path = save_json(manifest, run_root / "manifest.json")
 
     output = {
         "run_id": str(run_id),
-        "run_dir": report_paths["run_dir"],
+        "run_dir": run_root,
+        "run_root": run_root,
         "manifest_path": manifest_path,
         "config_path": config_path,
         "manifest": manifest,
-        "step3_run_id": step3_run_id,
-        "step4_run_id": step4_run_id,
+        "step3_run_id": str(run_id),
+        "step4_run_id": str(run_id),
+        "step5_run_id": str(run_id),
         "step3_output": step3_output,
         "step4_output": step4_output,
         "step5_tables": step5_tables,
         "step5_table_paths": step5_table_paths,
         "step5_report_path": step5_report_path,
+        "step5_run_dir": step5_paths["run_dir"],
     }
 
     if step5_status != "completed":
@@ -362,7 +409,19 @@ def run_step34_pipeline(
     step4_config: dict[str, object],
     overwrite: bool = False,
 ) -> dict[str, object]:
-    """Compatibility wrapper that now executes Step 3, 4, and 5."""
+    """Compatibility wrapper that now executes Step 3, Step 4, and Step 5.
+
+    Args:
+        df_all: Preprocessed participant table.
+        run_id: Stable run identifier shared across all steps.
+        output_root: Absolute or repository-relative Elias output root.
+        step3_config: Step 3 configuration payload.
+        step4_config: Step 4 configuration payload.
+        overwrite: Whether to replace an existing unified run folder.
+
+    Returns:
+        Output dictionary from `run_step345_pipeline`.
+    """
     default_step5_seed = int(step4_config.get("random_seed", 0))
     return run_step345_pipeline(
         df_all,

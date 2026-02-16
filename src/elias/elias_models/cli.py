@@ -1,3 +1,7 @@
+#
+# Command-line entrypoint for Elias Step 3/4/5 pipelines.
+# Main functions: _build_arg_parser, command handlers, and main.
+
 from __future__ import annotations
 
 import argparse
@@ -150,7 +154,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
 
     pipeline_parser = subparsers.add_parser(
         "pipeline-run",
-        help="Run combined Step 3, Step 4, and Step 5 pipelines with linked manifests.",
+        help="Run combined Step 3+4+5 pipeline into one structured run folder.",
     )
     pipeline_parser.add_argument("--run-id", type=str, required=True)
     pipeline_parser.add_argument("--output-root", type=str, default="data/elias")
@@ -427,9 +431,11 @@ def _cmd_pipeline_run(args: argparse.Namespace) -> None:
         raise
 
     print(f"Master run finished: {pipeline_output['run_id']}")
+    print(f"Master run directory: {pipeline_output['run_root']}")
     print(f"Master manifest path: {pipeline_output['manifest_path']}")
-    print(f"Linked Step 3 run: {pipeline_output['step3_run_id']}")
-    print(f"Linked Step 4 run: {pipeline_output['step4_run_id']}")
+    print(f"Step 3 directory: {pipeline_output['step3_output']['run_dir']}")
+    print(f"Step 4 directory: {pipeline_output['step4_output']['run_dir']}")
+    print(f"Step 5 directory: {pipeline_output['step5_run_dir']}")
     print(f"Step 5 status: {pipeline_output['manifest']['step5_status']}")
     print(f"Step 5 report path: {pipeline_output['step5_report_path']}")
 

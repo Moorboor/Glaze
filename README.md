@@ -148,13 +148,22 @@ PYTHONPATH=src:src/elias python -m elias_models.cli pipeline-run \
 
 Where outputs are saved:
 
-- Step 3: `data/elias/surrogate_recovery/runs/<run_id>__step3/`
-- Step 4: `data/elias/participant_fit/runs/<run_id>__step4/`
-- Step 5 + reporting:
-  - `data/elias/reporting/runs/<run_id>/manifest.json`
-  - `data/elias/reporting/runs/<run_id>/tables/`
-  - `data/elias/reporting/runs/<run_id>/reports/step5_report.md`
-  - `data/elias/reporting/runs/<run_id>/logs/step5_error.txt` (only if Step 5 fails)
+- Unified run root: `data/elias/runs/<run_id>/`
+- Pipeline metadata:
+  - `data/elias/runs/<run_id>/config.json`
+  - `data/elias/runs/<run_id>/manifest.json`
+- Step 3 artifacts:
+  - `data/elias/runs/<run_id>/step3/config.json`
+  - `data/elias/runs/<run_id>/step3/manifest.json`
+  - `data/elias/runs/<run_id>/step3/tables/`
+- Step 4 artifacts:
+  - `data/elias/runs/<run_id>/step4/config.json`
+  - `data/elias/runs/<run_id>/step4/manifest.json`
+  - `data/elias/runs/<run_id>/step4/tables/`
+- Step 5 artifacts:
+  - `data/elias/runs/<run_id>/step5/tables/`
+  - `data/elias/runs/<run_id>/step5/reports/step5_report.md`
+  - `data/elias/runs/<run_id>/step5/logs/step5_error.txt` (only if Step 5 fails)
 
 ## Working with `src/evan`
 
