@@ -1,0 +1,2 @@
+This folder is a copy of Evan's repo made on 2026-02-17
+source: https://github.com/evanradcliffe/triangles-task
