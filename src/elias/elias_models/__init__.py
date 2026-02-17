@@ -1,55 +1,24 @@
-# Public package surface for Elias model code.
-# Re-exports core model runners, scoring/fitting helpers, and notebook workflow wrappers.
+"""Workflow-only public API for Elias model comparison.
 
-"""Public API for Elias model modules."""
+Function Inventory:
+- `prepare_modeling_data`: Build model-ready dataframe from real participant data.
+- `fit_models_train_split`: Fit all three candidate models on pooled TRAIN rows.
+- `score_models_test_split`: Score fitted models on pooled TEST rows.
+- `run_model_comparison`: One-call wrapper that executes prepare+fit+score and returns winner tables.
 
-from .continuous_models import run_model_a_threshold, run_model_b_asymptote
+Call-site context:
+- Imported by `src/elias/elias_notebook.ipynb` and external scripts.
+- Backed internally by `core_workflow.py`.
+"""
+
 from .core_workflow import (
     fit_models_train_split,
     prepare_modeling_data,
     run_model_comparison,
     score_models_test_split,
 )
-from .data_loading import load_participant_data, preprocess_loaded_participant_data
-from .ddm_model import run_model_c_ddm
-from .environment import generate_environment_from_template, objective_h_mean_from_template
-from .likelihood_scoring import score_model_simulation_likelihood
-from .optimizer_runner import fit_model_parameters
-from .parameter_space import (
-    eta_to_theta,
-    get_parameter_spec,
-    theta_to_eta,
-    theta_to_named_params,
-    theta_to_scoring_model_params,
-)
-from .subjective_h import (
-    SubjectiveHGrid,
-    attach_subjective_h_from_train,
-    build_normative_belief_columns,
-    fit_blockwise_subjective_h_choice_only,
-    glaze_psi,
-)
 
 __all__ = [
-    "load_participant_data",
-    "preprocess_loaded_participant_data",
-    "fit_blockwise_subjective_h_choice_only",
-    "attach_subjective_h_from_train",
-    "build_normative_belief_columns",
-    "SubjectiveHGrid",
-    "glaze_psi",
-    "generate_environment_from_template",
-    "objective_h_mean_from_template",
-    "run_model_a_threshold",
-    "run_model_b_asymptote",
-    "run_model_c_ddm",
-    "score_model_simulation_likelihood",
-    "fit_model_parameters",
-    "get_parameter_spec",
-    "eta_to_theta",
-    "theta_to_eta",
-    "theta_to_named_params",
-    "theta_to_scoring_model_params",
     "prepare_modeling_data",
     "fit_models_train_split",
     "score_models_test_split",

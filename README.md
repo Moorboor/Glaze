@@ -29,69 +29,50 @@ Glaze/
 │   ├── participants.csv
 │   ├── elias.csv
 │   ├── evan.csv
-│   └── maik.csv
+│   ├── maik.csv
+│   └── elias/
+│       └── runs/                 # historical artifacts from old workflow
 └── src/
     ├── common_helpers/
     │   ├── combine_participant_data_csvs.py
     │   └── preprocessing.py
     ├── elias/
-    │   ├── elias_notebook.ipynb       # notebook-first workflow
+    │   ├── elias_notebook.ipynb
     │   └── elias_models/
     │       ├── __init__.py
     │       ├── core_workflow.py
-    │       ├── constants.py
-    │       ├── data_validation.py
-    │       ├── data_loading.py
-    │       ├── subjective_h.py
-    │       ├── environment.py
-    │       ├── continuous_models.py
-    │       ├── ddm_model.py
-    │       ├── likelihood_scoring.py
-    │       ├── parameter_space.py
-    │       ├── optimizer_runner.py
+    │       ├── data_pipeline.py
+    │       ├── model_fitting.py
+    │       ├── model_scoring.py
     │       └── test_core_workflow.py
     ├── evan/
     │   └── glaze.py
     └── old/
 ```
 
-## Current Elias Workflow (`src/elias`)
+## Elias Workflow (`src/elias`)
 
-The active Elias path is intentionally simplified and notebook-first:
+The active Elias path is notebook-first and intentionally scoped to real-data fitting:
 
 1. Load and preprocess participant data.
-2. Infer blockwise subjective hazard from TRAIN choices.
-3. Reconstruct normative belief state recursion.
-4. Fit three candidate models on pooled TRAIN rows:
+2. Fit blockwise subjective hazard on TRAIN and reconstruct normative state.
+3. Fit three candidate models on pooled TRAIN rows:
    - `cont_threshold`
    - `cont_asymptote`
    - `ddm_dnm`
-5. Score fitted models on pooled TEST rows and compare held-out joint score.
+4. Score fitted models on pooled TEST rows.
+5. Report a compact comparison table and plot.
 
-This workflow does **not** use surrogate-data generation or multi-step Step3/Step4/Step5 pipeline orchestration.
+This workflow does not include surrogate-data generation or the old multi-step Step3/Step4/Step5 artifact pipeline.
 
 ## Public Elias API
 
-`src/elias/elias_models/__init__.py` exports a reduced interface centered on:
+`src/elias/elias_models/__init__.py` exports only the workflow surface:
 
-- Data loading/preprocessing:
-  - `load_participant_data`
-  - `preprocess_loaded_participant_data`
-- Subjective hazard and state construction:
-  - `fit_blockwise_subjective_h_choice_only`
-  - `attach_subjective_h_from_train`
-  - `build_normative_belief_columns`
-- Model runners and scoring/fitting:
-  - `run_model_a_threshold`
-  - `run_model_b_asymptote`
-  - `run_model_c_ddm`
-  - `score_model_simulation_likelihood`
-  - `fit_model_parameters`
-- Workflow wrappers:
-  - `prepare_modeling_data`
-  - `fit_models_train_split`
-  - `score_models_test_split`
-  - `run_model_comparison`
+- `prepare_modeling_data`
+- `fit_models_train_split`
+- `score_models_test_split`
+- `run_model_comparison`
 
 ## Notebook Usage
 
@@ -99,13 +80,14 @@ Primary entrypoint:
 
 - `src/elias/elias_notebook.ipynb`
 
-It performs:
+Notebook sections:
 
-1. data loading/preprocessing,
-2. subjective-H and normative-state construction,
-3. pooled model fitting,
-4. pooled held-out scoring,
-5. compact comparison table and figure.
+1. Step 0: Setup and imports
+2. Step 1: Load and preprocess data
+3. Step 2: Fit subjective hazard and build normative state
+4. Step 3: Fit candidate models on TRAIN
+5. Step 4: Score fitted models on TEST
+6. Step 5: Compact summary and plot
 
 ## Optional Script Usage
 
@@ -125,7 +107,7 @@ PYTHONPATH=src:src/elias python your_script.py
 
 ## Evan Glaze Backend
 
-`src/evan/glaze.py` is kept intact and remains the backend for Elias continuous-model simulation and scoring paths.
+`src/evan/glaze.py` is unchanged and remains the backend for Elias continuous-model and DDM simulation paths.
 
 ## Environment Setup
 

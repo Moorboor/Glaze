@@ -1,4 +1,0 @@
-model_name,joint_diag_rate,param_median_pearson_r,joint_diag_min,param_median_r_min,pass_joint,pass_param,status
-cont_asymptote,1.0,,0.6,0.3,True,False,caution
-cont_threshold,0.0,,0.6,0.3,False,False,weak
-ddm_dnm,1.0,,0.6,0.3,True,False,caution

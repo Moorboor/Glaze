@@ -1,4 +1,0 @@
-participant_id,winner_model_name,winner_joint_score,winner_choice_only_score,winner_rt_only_cond_score,winner_bic_score,primary_score_column,tie_on_primary,tied_models_primary,participant_tie_break_applied,participant_tie_break_rule,n_blocks_test,n_blocks_matching_winner,blockwise_consistency,winner_primary_score_value
-P01,cont_asymptote,789.587829250686,6.1502890167869,783.4375402338993,1601.0011754597303,joint_score,False,"__JSON__::[""cont_asymptote""]",False,none,4,3,0.75,789.587829250686
-P02,cont_asymptote,669.0092951662186,2.3279029009783354,666.6813922652404,1360.1518670571209,joint_score,False,"__JSON__::[""cont_asymptote""]",False,none,4,2,0.5,669.0092951662186
-P03,cont_asymptote,734.190329137042,0.0,734.190329137042,1490.5139349987676,joint_score,False,"__JSON__::[""cont_asymptote""]",False,none,4,4,1.0,734.190329137042

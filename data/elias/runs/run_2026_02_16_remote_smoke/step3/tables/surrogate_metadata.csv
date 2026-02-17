@@ -1,4 +1,0 @@
-surrogate_id,generating_model_name,sample_index,n_rows,n_unique_choices,min_rt_ms,max_rt_ms,timeout_fallback_count
-cont_threshold_s000,cont_threshold,0,456,2,906.0000000000007,5000.000000000005,224
-cont_asymptote_s000,cont_asymptote,0,456,2,6.0,4897.99999999997,0
-ddm_dnm_s000,ddm_dnm,0,456,2,991.3082265581644,3725.3082265581643,0

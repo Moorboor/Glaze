@@ -1,4 +1,12 @@
-"""Regression checks for the simplified notebook-first Elias workflow."""
+"""Regression tests for the 6-file Elias workflow surface.
+
+Function Inventory:
+- `CoreWorkflowTests.setUpClass`: Build shared prepare/fit/score fixtures once.
+- `CoreWorkflowTests.test_prepare_modeling_data_creates_required_columns`: Verifies H and normative state columns.
+- `CoreWorkflowTests.test_fit_models_train_split_returns_three_models`: Verifies three fitted models and finite fit scores.
+- `CoreWorkflowTests.test_score_models_test_split_returns_finite_scores_and_winner`: Verifies finite held-out scores and winner consistency.
+- `CoreWorkflowTests.test_notebook_has_new_step_sections_and_no_legacy_symbols`: Verifies notebook structure and legacy-symbol removal.
+"""
 
 from __future__ import annotations
 
@@ -16,15 +24,20 @@ from elias_models import (
 
 
 class CoreWorkflowTests(unittest.TestCase):
+    """Workflow-level tests that mirror the notebook execution path."""
+
     @classmethod
     def setUpClass(cls) -> None:
+        """Build reusable prepare/fit/score outputs for all test methods."""
         cls.prep_output = prepare_modeling_data(
             csv_path="data/participants.csv",
             participant_ids=["P01"],
         )
+
         cls.fit_output = fit_models_train_split(
             cls.prep_output["df_model"],
             fit_config={
+                # Keep test runtime short while still exercising all code paths.
                 "n_starts": 1,
                 "n_iterations": 0,
                 "n_sims_per_trial": 8,
@@ -36,6 +49,7 @@ class CoreWorkflowTests(unittest.TestCase):
             },
             random_seed=11,
         )
+
         cls.score_output = score_models_test_split(
             cls.prep_output["df_model"],
             fitted_models=cls.fit_output["fit_results"],
@@ -47,26 +61,31 @@ class CoreWorkflowTests(unittest.TestCase):
         )
 
     def test_prepare_modeling_data_creates_required_columns(self) -> None:
+        """Prepared modeling data should include finite H and normative state columns."""
         df_model = self.prep_output["df_model"]
-        for col in ("H", "prev_normative_belief_L", "normative_belief_L"):
-            self.assertIn(col, df_model.columns)
+        for column in ("H", "prev_normative_belief_L", "normative_belief_L"):
+            self.assertIn(column, df_model.columns)
         self.assertTrue(np.isfinite(df_model["H"].to_numpy(dtype=float)).all())
 
     def test_fit_models_train_split_returns_three_models(self) -> None:
+        """Fit output should contain three candidate models with finite objectives."""
         fit_table = self.fit_output["fit_table"]
         self.assertEqual(len(fit_table), 3)
         self.assertEqual(len(self.fit_output["fit_results"]), 3)
         self.assertTrue(np.isfinite(fit_table["best_fit_objective_score"].to_numpy(dtype=float)).all())
 
     def test_score_models_test_split_returns_finite_scores_and_winner(self) -> None:
+        """Held-out scoring should return finite scores and winner at top-ranked row."""
         score_table = self.score_output["score_table"]
         self.assertEqual(len(score_table), 3)
         self.assertTrue(np.isfinite(score_table["joint_score_test"].to_numpy(dtype=float)).all())
+
         winner = str(self.score_output["winner_model_name"])
         self.assertIn(winner, tuple(score_table["model_name"].astype(str).tolist()))
         self.assertEqual(winner, str(score_table.iloc[0]["model_name"]))
 
-    def test_notebook_import_surface_has_no_legacy_pipeline_symbols(self) -> None:
+    def test_notebook_has_new_step_sections_and_no_legacy_symbols(self) -> None:
+        """Notebook should use the new step framing and avoid removed pipeline markers."""
         notebook_path = Path("src/elias/elias_notebook.ipynb")
         self.assertTrue(notebook_path.exists(), msg=f"Notebook not found: {notebook_path}")
         notebook_data = json.loads(notebook_path.read_text(encoding="utf-8"))
@@ -75,6 +94,17 @@ class CoreWorkflowTests(unittest.TestCase):
             for cell in notebook_data.get("cells", [])
             if cell.get("cell_type") in {"markdown", "code"}
         )
+
+        required_step_markers = (
+            "Step 0: Setup and imports",
+            "Step 1: Load and preprocess data",
+            "Step 2: Fit subjective hazard and build normative state",
+            "Step 3: Fit candidate models on TRAIN",
+            "Step 4: Score fitted models on TEST",
+            "Step 5: Compact summary and plot",
+        )
+        for marker in required_step_markers:
+            self.assertIn(marker, notebook_text)
 
         forbidden_markers = (
             "run_step3_pipeline",
@@ -85,6 +115,8 @@ class CoreWorkflowTests(unittest.TestCase):
             "surrogate_recovery",
             "participant-run",
             "pipeline-run",
+            "analysis_io",
+            "analysis_plots",
         )
         for marker in forbidden_markers:
             self.assertNotIn(marker, notebook_text)
