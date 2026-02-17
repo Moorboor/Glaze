@@ -1,0 +1,23 @@
+{
+  "candidate_models": [
+    "cont_threshold",
+    "cont_asymptote",
+    "ddm_dnm"
+  ],
+  "n_surrogates_per_model": 20,
+  "surrogate_n_draws_per_trial": 128,
+  "fit_n_starts": 4,
+  "fit_n_iterations": 8,
+  "fit_n_sims_per_trial": 150,
+  "fit_objective": "choice_only",
+  "dt_ms": 1.0,
+  "max_duration_ms": 5000.0,
+  "random_seed": 0,
+  "soft_gate_joint_diag_min": 0.6,
+  "soft_gate_param_median_r_min": 0.3,
+  "workers": 14,
+  "use_block_sidecar_params": true,
+  "max_timeout_fallback_rate": 0.2,
+  "max_timeout_resample_retries": 5,
+  "surrogate_subjective_h_global": null
+}
