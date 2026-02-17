@@ -1,13 +1,31 @@
 """Data preparation and subjective-state construction for the Elias workflow.
 
 Function Inventory:
-- `load_participant_data`: Load participant CSV rows and normalize choices to `-1/+1`; called by `core_workflow.prepare_modeling_data` and notebook Step 1.
-- `preprocess_loaded_participant_data`: Apply exclusions and train/test split; called by `core_workflow.prepare_modeling_data` and notebook Step 1.
-- `fit_blockwise_subjective_h_choice_only`: Fit one subjective hazard value per participant-block from TRAIN choices; called by `core_workflow.prepare_modeling_data` and notebook Step 2.
-- `attach_subjective_h_from_train`: Merge fitted blockwise hazard back onto all rows; called by `core_workflow.prepare_modeling_data` and notebook Step 2.
-- `build_normative_belief_columns`: Reconstruct prior and posterior normative beliefs from LLR and H; called by `core_workflow.prepare_modeling_data` and notebook Step 2.
-- `SubjectiveHGrid`: Grid configuration container used by subjective-H search internals.
-- `glaze_psi`: Numerically stable Glaze prior transform used in normative recursion.
+    - load_participant_data
+            Load participant CSV rows and normalize choices to `-1/+1`.
+            Called by: core_workflow.prepare_modeling_data, notebook Step 1.
+    
+    - preprocess_loaded_participant_data
+            Apply exclusions and train/test split.
+            Called by: core_workflow.prepare_modeling_data, notebook Step 1.
+    
+    - fit_blockwise_subjective_h_choice_only
+            Fit one subjective hazard value per participant-block from TRAIN choices.
+            Called by: core_workflow.prepare_modeling_data, notebook Step 2.
+    
+    - attach_subjective_h_from_train
+            Merge fitted blockwise hazard back onto all rows.
+            Called by: core_workflow.prepare_modeling_data, notebook Step 2.
+    
+    - build_normative_belief_columns
+            Reconstruct prior and posterior normative beliefs from LLR and H.
+            Called by: core_workflow.prepare_modeling_data, notebook Step 2.
+    
+    - SubjectiveHGrid
+            Grid configuration container used by subjective-H search internals.
+    
+    - glaze_psi
+            Numerically stable Glaze prior transform used in normative recursion.
 """
 
 from __future__ import annotations

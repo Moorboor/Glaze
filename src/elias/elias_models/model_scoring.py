@@ -1,15 +1,23 @@
 """Simulation and likelihood scoring for Elias model comparison.
 
-Function Inventory:
-- `score_model_simulation_likelihood`: Main pooled trial scorer used in fitting and held-out evaluation; called by `model_fitting.fit_model_parameters` and `core_workflow.score_models_test_split`.
-- `_simulate_continuous_trials_for_likelihood`: Monte Carlo sampler for continuous models A/B; called by `score_model_simulation_likelihood`.
-- `_simulate_ddm_trials_for_likelihood`: Monte Carlo sampler for DDM model C; called by `score_model_simulation_likelihood`.
-- `_prepare_model_input`: Schema/typing normalization for simulation-ready trial frames; called by `score_model_simulation_likelihood`.
-- `_attach_thresholds`: Build per-block thresholds for continuous models; called by `_simulate_continuous_trials_for_likelihood`.
-- `_estimate_rt_density_at_observed_value`: Histogram-based conditional RT density helper; called by `score_model_simulation_likelihood`.
-- `_build_rt_bin_edges`: Fixed-width RT bin constructor; called by `score_model_simulation_likelihood`.
-- `_simulate_ddm_single_sample`: Single DDM trajectory simulator; called by `_simulate_ddm_trials_for_likelihood`.
-- `_sigmoid`: Stable logistic helper for DDM start-point transform; called by `_simulate_ddm_trials_for_likelihood`.
+Main Entry Point:
+    - score_model_simulation_likelihood: Pool trial scorer for fitting and evaluation.
+
+Continuous Model Simulators (A/B):
+    - _simulate_continuous_trials_for_likelihood: Monte Carlo sampler.
+    - _attach_thresholds: Per-block threshold builder.
+
+DDM Model Simulator (C):
+    - _simulate_ddm_trials_for_likelihood: Monte Carlo sampler.
+    - _simulate_ddm_single_sample: Single trajectory simulator.
+    - _sigmoid: Stable logistic for start-point transform.
+
+Input Preparation:
+    - _prepare_model_input: Schema normalization for trial frames.
+
+RT Density Estimation:
+    - _estimate_rt_density_at_observed_value: Histogram-based conditional density.
+    - _build_rt_bin_edges: Fixed-width bin constructor.
 """
 
 from __future__ import annotations
@@ -325,6 +333,7 @@ def _simulate_continuous_trials_for_likelihood(
     *,
     stop_on_sat: bool,
     n_sims_per_trial: int,
+    min_duration_ms: float,
     max_duration_ms: float,
     dt_ms: float,
     noise_std: float,
@@ -340,8 +349,12 @@ def _simulate_continuous_trials_for_likelihood(
         raise ValueError("n_sims_per_trial must be > 0")
     if float(dt_ms) <= 0.0:
         raise ValueError("dt_ms must be > 0")
+    if float(min_duration_ms) < 0.0:
+        raise ValueError("min_duration_ms must be >= 0")
     if float(max_duration_ms) <= 0.0:
         raise ValueError("max_duration_ms must be > 0")
+    if float(min_duration_ms) > float(max_duration_ms):
+        raise ValueError("min_duration_ms must be <= max_duration_ms")
 
     thresholded_df = _attach_thresholds(
         model_df,
@@ -377,7 +390,8 @@ def _simulate_continuous_trials_for_likelihood(
                     stop_on_sat=bool(effective_stop_on_sat),
                 )
                 decisions[sample_index] = _coerce_simulated_decision(sim_result["decision"])
-                rts_ms[sample_index] = float(sim_result["reaction_time_ms"])
+                raw_rt_ms = float(sim_result["reaction_time_ms"])
+                rts_ms[sample_index] = float(max(raw_rt_ms, float(min_duration_ms)))
 
             decisions_by_trial.append(decisions)
             rts_by_trial.append(rts_ms)
@@ -389,6 +403,7 @@ def _simulate_ddm_trials_for_likelihood(
     model_df: pd.DataFrame,
     *,
     n_sims_per_trial: int,
+    min_duration_ms: float,
     dt_ms: float,
     max_duration_ms: float,
     boundary_a: float,
@@ -403,6 +418,8 @@ def _simulate_ddm_trials_for_likelihood(
         raise ValueError("n_sims_per_trial must be > 0")
     if float(dt_ms) <= 0.0:
         raise ValueError("dt_ms must be > 0")
+    if float(min_duration_ms) < 0.0:
+        raise ValueError("min_duration_ms must be >= 0")
     if float(max_duration_ms) <= 0.0:
         raise ValueError("max_duration_ms must be > 0")
     if float(boundary_a) <= 0.0:
@@ -434,7 +451,8 @@ def _simulate_ddm_trials_for_likelihood(
                 rng=rng,
             )
             decisions[sample_index] = _coerce_simulated_decision(raw_decision)
-            rts_ms[sample_index] = float(decision_rt_ms + float(non_decision_time_ms))
+            raw_rt_ms = float(decision_rt_ms + float(non_decision_time_ms))
+            rts_ms[sample_index] = float(max(raw_rt_ms, float(min_duration_ms)))
 
         decisions_by_trial.append(decisions)
         rts_by_trial.append(rts_ms)
@@ -481,6 +499,7 @@ def score_model_simulation_likelihood(
             model_df=model_df,
             stop_on_sat=(model_name_str == "cont_asymptote"),
             n_sims_per_trial=int(n_sims_per_trial),
+            min_duration_ms=float(params.get("min_duration_ms", 0.0)),
             max_duration_ms=float(params.get("max_duration_ms", 1500.0)),
             dt_ms=float(params.get("dt_ms", 10.0)),
             noise_std=float(params.get("noise_std", 0.7)),
@@ -497,6 +516,7 @@ def score_model_simulation_likelihood(
         simulated_decisions, simulated_rts_ms = _simulate_ddm_trials_for_likelihood(
             model_df=model_df,
             n_sims_per_trial=int(n_sims_per_trial),
+            min_duration_ms=float(params.get("min_duration_ms", 0.0)),
             dt_ms=float(params.get("dt_ms", 5.0)),
             max_duration_ms=float(params.get("max_duration_ms", 1500.0)),
             boundary_a=float(params.get("boundary_a", 1.0)),

@@ -1,11 +1,44 @@
 """Regression tests for the 6-file Elias workflow surface.
 
-Function Inventory:
-- `CoreWorkflowTests.setUpClass`: Build shared prepare/fit/score fixtures once.
-- `CoreWorkflowTests.test_prepare_modeling_data_creates_required_columns`: Verifies H and normative state columns.
-- `CoreWorkflowTests.test_fit_models_train_split_returns_three_models`: Verifies three fitted models and finite fit scores.
-- `CoreWorkflowTests.test_score_models_test_split_returns_finite_scores_and_winner`: Verifies finite held-out scores and winner consistency.
-- `CoreWorkflowTests.test_notebook_has_new_step_sections_and_no_legacy_symbols`: Verifies notebook structure and legacy-symbol removal.
+This module contains comprehensive workflow-level tests that mirror the notebook execution path,
+ensuring that the core pipeline components (prepare, fit, score) operate correctly end-to-end.
+
+How to run the tests:
+    From the repository root, run one of the following commands:
+    
+    # Run all tests in this module
+    python -m pytest src/elias/elias_models/test_core_workflow.py -v
+    
+    # Or using unittest directly
+    python -m unittest src.elias.elias_models.test_core_workflow -v
+    
+    # Run a specific test
+    python -m pytest src/elias/elias_models/test_core_workflow.py::CoreWorkflowTests::test_prepare_modeling_data_creates_required_columns -v
+    
+    # Run with coverage report
+    python -m pytest src/elias/elias_models/test_core_workflow.py --cov=elias_models --cov-report=html
+
+    CoreWorkflowTests.setUpClass:
+        Build shared prepare/fit/score fixtures once for all test methods.
+        Loads participant data, fits candidate models on training split, 
+        and scores them on held-out test split with lightweight configuration.
+
+    CoreWorkflowTests.test_prepare_modeling_data_creates_required_columns:
+        Verifies that prepared modeling data includes required H and normative state columns
+        with finite numerical values.
+
+    CoreWorkflowTests.test_fit_models_train_split_returns_three_models:
+        Verifies that fit process returns exactly three candidate models
+        with finite fit objective scores.
+
+    CoreWorkflowTests.test_score_models_test_split_returns_finite_scores_and_winner:
+        Verifies that scoring on held-out test split returns finite scores,
+        identifies a winner model, and ranks it at the top of results.
+
+    CoreWorkflowTests.test_notebook_has_new_step_sections_and_no_legacy_symbols:
+        Verifies notebook structure contains required step sections and
+        successfully removes legacy pipeline markers and deprecated symbols.
+
 """
 
 from __future__ import annotations
@@ -34,19 +67,25 @@ class CoreWorkflowTests(unittest.TestCase):
             participant_ids=["P01"],
         )
 
+        # Call fit_models_train_split to train candidate models on the training split
         cls.fit_output = fit_models_train_split(
+            # Pass the preprocessed modeling dataframe from prepare_modeling_data
             cls.prep_output["df_model"],
+            # Configuration dictionary specifying fitting hyperparameters
             fit_config={
                 # Keep test runtime short while still exercising all code paths.
-                "n_starts": 1,
-                "n_iterations": 0,
-                "n_sims_per_trial": 8,
-                "fit_objective": "choice_only",
-                "fixed_model_params": {
-                    "dt_ms": 10.0,
-                    "max_duration_ms": 1500.0,
+
+                "n_starts": 1,  # Number of optimization starting points
+                "n_iterations": 1,  # Number of fitting iterations per start
+                "n_sims_per_trial": 8,  # Simulations per trial for likelihood computation
+                "fit_objective": "choice_only",  # Objective function: choice accuracy only
+                "fixed_model_params": {  # Fixed parameters not optimized during fitting
+                    "dt_ms": 10.0,  # Time step in milliseconds
+                    "min_duration_ms": 150.0,  # Minimum simulated RT floor in milliseconds
+                    "max_duration_ms": 1500.0,  # Maximum trial duration in milliseconds
                 },
             },
+            # Random seed for reproducibility across fitting runs
             random_seed=11,
         )
 

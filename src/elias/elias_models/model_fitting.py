@@ -1,12 +1,31 @@
 """Parameter-space transforms and model fitting for Elias workflow scoring.
 
-Function Inventory:
-- `fit_model_parameters`: Multi-start optimizer over unconstrained eta space; called by `core_workflow.fit_models_train_split`.
-- `get_parameter_spec`: Ordered parameter spec per model; called by `fit_model_parameters` and parameter helpers.
-- `eta_to_theta`: Logistic transform from eta to bounded theta; called by `_score_eta_candidate`.
-- `theta_to_eta`: Inverse transform for recovery/debug; internal utility for consistency.
-- `theta_to_named_params`: Map theta vector to readable parameter names; called by `fit_model_parameters`.
-- `theta_to_scoring_model_params`: Convert theta to scorer-ready parameter dict; called by `_score_eta_candidate`.
+Main Functions:
+    fit_model_parameters()
+        Multi-start optimizer over unconstrained eta space.
+        Entry point called by core_workflow.fit_models_train_split().
+
+    get_parameter_spec()
+        Return ordered parameter specification for a given model.
+        Used by fit_model_parameters and parameter conversion helpers.
+
+Transform Functions:
+    eta_to_theta()
+        Logistic transform from unconstrained eta to bounded theta space.
+        Called by _score_eta_candidate during optimization.
+
+    theta_to_eta()
+        Inverse logit transform from bounded theta back to unconstrained eta.
+        Internal utility for consistency checks and parameter recovery.
+
+Parameter Mapping Functions:
+    theta_to_named_params()
+        Convert theta vector to human-readable parameter name dictionary.
+        Output used by fit_model_parameters in results.
+
+    theta_to_scoring_model_params()
+        Convert theta vector to scorer-compatible parameter dictionary.
+        Called by _score_eta_candidate before likelihood evaluation.
 """
 
 from __future__ import annotations
@@ -66,6 +85,7 @@ _DEFAULT_FIT_CONFIG: dict[str, object] = {
     "fit_objective": "choice_only",
     "fixed_model_params": {
         "dt_ms": 1.0,
+        "min_duration_ms": 0.0,
         "max_duration_ms": 5000.0,
     },
 }
@@ -291,6 +311,15 @@ def _build_fit_config(fit_config: dict[str, object] | None) -> dict[str, object]
     fixed_params = merged.get("fixed_model_params", {})
     if not isinstance(fixed_params, dict):
         raise ValueError("fixed_model_params must be a dictionary.")
+    if "min_duration_ms" in fixed_params:
+        if float(fixed_params["min_duration_ms"]) < 0.0:
+            raise ValueError("fixed_model_params['min_duration_ms'] must be >= 0.")
+    if "max_duration_ms" in fixed_params and "min_duration_ms" in fixed_params:
+        if float(fixed_params["min_duration_ms"]) > float(fixed_params["max_duration_ms"]):
+            raise ValueError(
+                "fixed_model_params['min_duration_ms'] must be <= "
+                "fixed_model_params['max_duration_ms']."
+            )
     merged["fixed_model_params"] = dict(fixed_params)
     return merged
 

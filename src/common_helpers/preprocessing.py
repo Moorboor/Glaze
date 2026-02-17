@@ -690,14 +690,20 @@ def preprocess_loaded_participant_data(
     nominal_before_mask = (
         preprocessing_overview_table["n_before"] == int(nominal_trials_per_block_before)
     )
+    # Create a new dataframe by adding a column that flags whether each block has the nominal number of trials before exclusions
     participant_structure_table = (
         preprocessing_overview_table.assign(
             block_is_nominal_before=nominal_before_mask.astype(int)
         )
+        # Group the data by participant_id, keeping participant_id as a regular column (not index)
         .groupby("participant_id", as_index=False)
+        # Aggregate the grouped data by computing:
         .agg(
+            # Count the number of unique block_ids per participant (blocks before exclusions)
             n_blocks_before=("block_id", "nunique"),
+            # Count the number of unique block_ids per participant (blocks after exclusions) - same operation
             n_blocks_after=("block_id", "nunique"),
+            # Check if ALL blocks for this participant have nominal trial counts before exclusions (returns True/False)
             all_blocks_nominal_before=("block_is_nominal_before", lambda x: bool(np.all(x == 1))),
         )
     )
