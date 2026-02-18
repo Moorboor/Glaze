@@ -52,6 +52,282 @@ PREPROCESS_REQUIRED_COLUMNS: tuple[str, ...] = (
 )
 
 
+def _build_subjective_h_grid(
+    *,
+    h_start: float = 0.001,
+    h_end: float = 0.999,
+    h_step: float = 0.01,
+) -> np.ndarray:
+    """Build the hazard-rate grid used for subjective-H fitting.
+
+    Args:
+        h_start: Inclusive lower bound for grid search.
+        h_end: Inclusive upper bound for grid search.
+        h_step: Positive grid increment.
+
+    Returns:
+        1D numpy array of candidate hazard rates.
+
+    Raises:
+        ValueError: If bounds or step are invalid.
+    """
+    if h_step <= 0:
+        raise ValueError(f"h_step must be > 0. Got {h_step}.")
+    if not (0.0 < h_start < 1.0 and 0.0 < h_end < 1.0):
+        raise ValueError(
+            f"h_start and h_end must lie in (0, 1). Got {h_start} and {h_end}."
+        )
+    if h_start > h_end:
+        raise ValueError(f"h_start must be <= h_end. Got {h_start} > {h_end}.")
+
+    # Add half-step slack to include the end value despite floating-point jitter.
+    h_grid = np.round(np.arange(h_start, h_end + (h_step / 2.0), h_step), 12)
+    if h_grid.size == 0:
+        raise ValueError("Subjective-H grid is empty. Check h_start/h_end/h_step.")
+    return h_grid
+
+
+def compute_subjective_h_snapshots(
+    df: pd.DataFrame,
+    *,
+    participant_col: str = "participant_id",
+    block_col: str = "block_id",
+    trial_col: str = "trial_index",
+    llr_col: str = "LLR",
+    choice_col: str = "choice",
+    beta: float = 1.0,
+    h_start: float = 0.001,
+    h_end: float = 0.999,
+    h_step: float = 0.01,
+    round_decimals: int = 4,
+) -> pd.Series:
+    """Recompute per-trial subjective hazard snapshots via incremental grid search.
+
+    This mirrors the app-side behavior used in the Triangles task export:
+    each row is fit using all trials observed so far within its participant/block
+    sequence, and ties are broken toward lower H values.
+
+    Args:
+        df: Input trial-level dataframe.
+        participant_col: Participant column name.
+        block_col: Block column name.
+        trial_col: Trial index column name (within block).
+        llr_col: Per-trial log-likelihood ratio column.
+        choice_col: Per-trial choice column (must be 0 or 1).
+        beta: Fixed inverse temperature used in the logistic choice rule.
+        h_start: Inclusive lower grid bound for H.
+        h_end: Inclusive upper grid bound for H.
+        h_step: Grid step for H candidates.
+        round_decimals: Number of decimals to round returned snapshots.
+
+    Returns:
+        Series aligned to `df.index` containing recomputed subjective H snapshots.
+
+    Raises:
+        ValueError: If required columns are missing or values are invalid.
+    """
+    _validate_required_columns(
+        df,
+        (participant_col, block_col, trial_col, llr_col, choice_col),
+        context="subjective-h recomputation",
+    )
+    if beta <= 0:
+        raise ValueError(f"beta must be > 0. Got {beta}.")
+
+    h_grid = _build_subjective_h_grid(h_start=h_start, h_end=h_end, h_step=h_step)
+    stability_ratio = (1.0 - h_grid) / h_grid
+
+    df_work = df.copy()
+    df_work[participant_col] = df_work[participant_col].astype(str)
+    df_work[block_col] = pd.to_numeric(df_work[block_col], errors="coerce")
+    df_work[trial_col] = pd.to_numeric(df_work[trial_col], errors="coerce")
+    df_work[llr_col] = pd.to_numeric(df_work[llr_col], errors="coerce")
+    df_work[choice_col] = pd.to_numeric(df_work[choice_col], errors="coerce")
+
+    finite_required = np.isfinite(
+        df_work[[block_col, trial_col, llr_col, choice_col]].to_numpy(dtype=float)
+    ).all(axis=1)
+    if not bool(np.all(finite_required)):
+        bad_n = int((~finite_required).sum())
+        raise ValueError(
+            f"Found {bad_n} non-finite rows in [{block_col}, {trial_col}, {llr_col}, {choice_col}] "
+            "during subjective-h recomputation."
+        )
+
+    choice_values = df_work[choice_col].to_numpy(dtype=float)
+    invalid_choice_mask = ~np.isin(choice_values, [0.0, 1.0])
+    if bool(np.any(invalid_choice_mask)):
+        bad_values = np.unique(choice_values[invalid_choice_mask])
+        raise ValueError(
+            f"Choice column '{choice_col}' must only contain 0/1. Found: {bad_values.tolist()}"
+        )
+
+    df_sorted = df_work.sort_values(
+        [participant_col, block_col, trial_col], kind="mergesort"
+    )
+    recomputed = pd.Series(index=df.index, dtype=float)
+
+    for _, group_df in df_sorted.groupby([participant_col, block_col], sort=False):
+        llr_values = group_df[llr_col].to_numpy(dtype=float)
+        choice_binary = group_df[choice_col].to_numpy(dtype=int)
+
+        # Per-candidate running state (belief + cumulative NLL) as trials accrue.
+        beliefs = np.zeros_like(h_grid, dtype=float)
+        cumulative_nll = np.zeros_like(h_grid, dtype=float)
+        fitted_h = np.empty(len(group_df), dtype=float)
+
+        for trial_i, (llr_value, choice_value) in enumerate(
+            zip(llr_values, choice_binary, strict=True)
+        ):
+            prev_beliefs = beliefs
+            psi_term = (
+                prev_beliefs
+                + np.log(stability_ratio + np.exp(-prev_beliefs))
+                - np.log(stability_ratio + np.exp(prev_beliefs))
+            )
+            beliefs = psi_term + llr_value
+
+            prob_right = 1.0 / (1.0 + np.exp(-(beta * beliefs)))
+            likelihood = prob_right if choice_value == 1 else (1.0 - prob_right)
+            cumulative_nll -= np.log(np.maximum(1e-10, likelihood))
+
+            # np.argmin returns the first occurrence, matching "<" tie-breaking.
+            best_idx = int(np.argmin(cumulative_nll))
+            fitted_h[trial_i] = h_grid[best_idx]
+
+        recomputed.loc[group_df.index] = np.round(fitted_h, int(round_decimals))
+
+    return recomputed.astype(float)
+
+
+def audit_subjective_h_snapshots(
+    df: pd.DataFrame,
+    *,
+    subjective_h_col: str = "subjective_h_snapshot",
+    participant_col: str = "participant_id",
+    block_col: str = "block_id",
+    trial_col: str = "trial_index",
+    llr_col: str = "LLR",
+    choice_col: str = "choice",
+    beta: float = 1.0,
+    h_start: float = 0.001,
+    h_end: float = 0.999,
+    h_step: float = 0.01,
+    tolerance: float = 1e-9,
+) -> pd.DataFrame:
+    """Audit stored subjective-H snapshots against recomputed values.
+
+    Args:
+        df: Input trial-level dataframe.
+        subjective_h_col: Existing subjective-H column to audit.
+        participant_col: Participant column name.
+        block_col: Block column name.
+        trial_col: Trial index column name.
+        llr_col: LLR column name.
+        choice_col: Choice column name.
+        beta: Fixed inverse temperature in the logistic choice rule.
+        h_start: Inclusive lower H grid bound.
+        h_end: Inclusive upper H grid bound.
+        h_step: H grid step.
+        tolerance: Absolute mismatch threshold.
+
+    Returns:
+        DataFrame containing only mismatch rows, sorted by participant/block/trial.
+        Columns include existing/recomputed H values and absolute error.
+    """
+    _validate_required_columns(
+        df,
+        (subjective_h_col, participant_col, block_col, trial_col, llr_col, choice_col),
+        context="subjective-h audit",
+    )
+    if tolerance < 0:
+        raise ValueError(f"tolerance must be >= 0. Got {tolerance}.")
+
+    existing_h = pd.to_numeric(df[subjective_h_col], errors="coerce")
+    recomputed_h = compute_subjective_h_snapshots(
+        df,
+        participant_col=participant_col,
+        block_col=block_col,
+        trial_col=trial_col,
+        llr_col=llr_col,
+        choice_col=choice_col,
+        beta=beta,
+        h_start=h_start,
+        h_end=h_end,
+        h_step=h_step,
+    )
+
+    abs_error = np.abs(existing_h - recomputed_h)
+    finite_mask = np.isfinite(existing_h.to_numpy(dtype=float)) & np.isfinite(
+        recomputed_h.to_numpy(dtype=float)
+    )
+    mismatch_mask = finite_mask & (abs_error.to_numpy(dtype=float) > float(tolerance))
+
+    mismatches = df.loc[mismatch_mask].copy()
+    mismatches["existing_subjective_h_snapshot"] = existing_h.loc[mismatch_mask].to_numpy(
+        dtype=float
+    )
+    mismatches["recomputed_subjective_h_snapshot"] = recomputed_h.loc[mismatch_mask].to_numpy(
+        dtype=float
+    )
+    mismatches["abs_error"] = abs_error.loc[mismatch_mask].to_numpy(dtype=float)
+
+    return mismatches.sort_values(
+        [participant_col, block_col, trial_col], kind="mergesort"
+    ).reset_index(drop=True)
+
+
+def repair_subjective_h_snapshot_column(
+    df: pd.DataFrame,
+    *,
+    output_col: str = "subjective_h_snapshot",
+    participant_col: str = "participant_id",
+    block_col: str = "block_id",
+    trial_col: str = "trial_index",
+    llr_col: str = "LLR",
+    choice_col: str = "choice",
+    beta: float = 1.0,
+    h_start: float = 0.001,
+    h_end: float = 0.999,
+    h_step: float = 0.01,
+    round_decimals: int = 4,
+) -> pd.DataFrame:
+    """Return a copy of `df` with a recomputed subjective-H column.
+
+    Args:
+        df: Input trial-level dataframe.
+        output_col: Output column name for recomputed subjective-H snapshots.
+        participant_col: Participant column name.
+        block_col: Block column name.
+        trial_col: Trial index column name.
+        llr_col: LLR column name.
+        choice_col: Choice column name.
+        beta: Fixed inverse temperature in the logistic choice rule.
+        h_start: Inclusive lower H grid bound.
+        h_end: Inclusive upper H grid bound.
+        h_step: H grid step.
+        round_decimals: Decimal precision for the output snapshots.
+
+    Returns:
+        DataFrame copy with `output_col` replaced by recomputed values.
+    """
+    repaired_df = df.copy()
+    repaired_df[output_col] = compute_subjective_h_snapshots(
+        repaired_df,
+        participant_col=participant_col,
+        block_col=block_col,
+        trial_col=trial_col,
+        llr_col=llr_col,
+        choice_col=choice_col,
+        beta=beta,
+        h_start=h_start,
+        h_end=h_end,
+        h_step=h_step,
+        round_decimals=round_decimals,
+    )
+    return repaired_df
+
+
 def _resolve_csv_path(csv_path: str | Path) -> Path:
     """Resolve a CSV path from cwd or repository root.
 
@@ -414,14 +690,20 @@ def preprocess_loaded_participant_data(
     nominal_before_mask = (
         preprocessing_overview_table["n_before"] == int(nominal_trials_per_block_before)
     )
+    # Create a new dataframe by adding a column that flags whether each block has the nominal number of trials before exclusions
     participant_structure_table = (
         preprocessing_overview_table.assign(
             block_is_nominal_before=nominal_before_mask.astype(int)
         )
+        # Group the data by participant_id, keeping participant_id as a regular column (not index)
         .groupby("participant_id", as_index=False)
+        # Aggregate the grouped data by computing:
         .agg(
+            # Count the number of unique block_ids per participant (blocks before exclusions)
             n_blocks_before=("block_id", "nunique"),
+            # Count the number of unique block_ids per participant (blocks after exclusions) - same operation
             n_blocks_after=("block_id", "nunique"),
+            # Check if ALL blocks for this participant have nominal trial counts before exclusions (returns True/False)
             all_blocks_nominal_before=("block_is_nominal_before", lambda x: bool(np.all(x == 1))),
         )
     )
