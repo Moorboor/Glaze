@@ -101,6 +101,23 @@ PYTHONPATH=src:src/elias python your_script.py
 
 `src/evan/glaze.py` is unchanged and remains the backend for Elias continuous-model and DDM simulation paths.
 
+## Martin Validation Notebook (`src/martin`)
+
+`src/martin/analysis_iribarren.ipynb` documents a synthetic-data validation pipeline for a hybrid discrete-continuous Glaze-style model, focused on parameter recovery rather than direct real-data model comparison.
+
+Core notebook flow:
+
+1. Define a fast simulation core (`psi_numba`, `run_simulation_loop_numba`, `run_full_simulation`).
+2. Fit parameters in two stages:
+   - Step A: fit hazard-rate `H` from choices (`fit_H_from_choices`).
+   - Step B: fit continuous parameters from RTs (`fit_params_from_RTs`).
+3. Generate virtual subjects (`generate_virtual_subjects`), run recovery (`run_parameter_recovery`), and visualize true vs recovered parameters (`plot_recovery_results`).
+
+How to run:
+
+- Open and run all cells in `src/martin/analysis_iribarren.ipynb` (the notebook includes a "Main Execution Block" that executes the full pipeline).
+- Main dependencies are already in `environment.yml` / `requirements.txt` (`numpy`, `pandas`, `scipy`, `matplotlib`, `seaborn`, `numba`).
+
 ## Environment Setup
 
 ```bash
