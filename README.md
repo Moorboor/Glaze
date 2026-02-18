@@ -6,19 +6,7 @@ Glaze, C. M., Kable, J. W., & Gold, J. I. (2015).
 *A normative account of evidence accumulation in unpredictable environments.*  
 Nature Neuroscience, 18(12), 1725-1732.
 
-## Collaboration Workflow
-
-All contributors should work in their own repository copy and keep implementation code inside their own folder in `src/` (for example `src/evan/`, `src/elias/`).
-
-Before merging to `main`:
-
-1. Sync with latest `main`.
-2. Keep changes scoped to your folder unless a shared file must change.
-3. Run your code end-to-end for your scope.
-4. Strip notebook outputs and remove temporary/debug files.
-5. Review your diff before commit.
-
-## Project Structure
+## Project Structure (Current)
 
 ```text
 Glaze/
@@ -31,13 +19,15 @@ Glaze/
 │   ├── evan.csv
 │   ├── maik.csv
 │   └── elias/
-│       └── runs/                 # historical artifacts from old workflow
+│       ├── 2026_02_18_choice_fit_run/
+│       └── 2026_02_18_joint_fit_run/
 └── src/
     ├── common_helpers/
+    │   ├── __init__.py
     │   ├── combine_participant_data_csvs.py
     │   └── preprocessing.py
     ├── elias/
-    │   ├── elias_notebook.ipynb
+    │   ├── workflow.ipynb
     │   └── elias_models/
     │       ├── __init__.py
     │       ├── core_workflow.py
@@ -47,12 +37,14 @@ Glaze/
     │       └── test_core_workflow.py
     ├── evan/
     │   └── glaze.py
+    ├── martin/
+    │   └── analysis_iribarren.ipynb
     └── old/
 ```
 
 ## Elias Workflow (`src/elias`)
 
-The active Elias path is notebook-first and intentionally scoped to real-data fitting:
+The active Elias path is notebook-first and scoped to real-data fitting:
 
 1. Load and preprocess participant data.
 2. Fit blockwise subjective hazard on TRAIN and reconstruct normative state.
@@ -63,7 +55,7 @@ The active Elias path is notebook-first and intentionally scoped to real-data fi
 4. Score fitted models on pooled TEST rows.
 5. Report a compact comparison table and plot.
 
-This workflow does not include surrogate-data generation or the old multi-step Step3/Step4/Step5 artifact pipeline.
+Run artifacts are written/read from `data/elias/*_run/` directories (for example `2026_02_18_joint_fit_run`).
 
 ## Public Elias API
 
@@ -78,7 +70,7 @@ This workflow does not include surrogate-data generation or the old multi-step S
 
 Primary entrypoint:
 
-- `src/elias/elias_notebook.ipynb`
+- `src/elias/workflow.ipynb`
 
 Notebook sections:
 
@@ -120,18 +112,4 @@ If the environment already exists:
 
 ```bash
 conda env update -f environment.yml --prune
-```
-
-## Notebook Output Stripping (`nbstripout`)
-
-```bash
-pip install -r requirements.txt
-nbstripout --install
-```
-
-If needed once after enabling filters:
-
-```bash
-git add --renormalize .
-git commit -m "Normalize files after enabling nbstripout"
 ```
