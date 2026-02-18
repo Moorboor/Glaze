@@ -1,0 +1,4 @@
+model_name,fit_objective,best_fit_objective_score,best_joint_score_train,best_choice_only_score_train,best_rt_only_cond_score_train,n_parameters,n_evaluations,fit_seed
+cont_asymptote,joint,11904.575241920904,11904.575241920904,4452.926256434041,7451.648985486862,6,8,1042
+ddm_dnm,joint,12981.6836267707,12981.6836267707,3726.0211317614003,9255.6624950093,4,8,2042
+cont_threshold,joint,14354.244602510162,14354.244602510162,6175.13406138414,8179.110541126021,6,8,42
